@@ -10,6 +10,7 @@ export type CategoryId =
   | "alignment"
   | "timing"
   | "format"
+  | "darkModule"
   | "data"
   | "ec";
 
@@ -28,44 +29,51 @@ export const CATEGORIES: Category[] = [
     id: "finder",
     label: "Finder patterns",
     description: "The three corner squares that let a reader locate the code.",
-    dark: "#ef4444",
-    light: "#fde4e4",
+    dark: "#f05556",
+    light: "#feeded",
   },
   {
     id: "alignment",
     label: "Alignment pattern",
     description:
       "Lets the reader determine orientation and correct for distortion.",
-    dark: "#ec4899",
-    light: "#fbdcef",
+    dark: "#ee58a3",
+    light: "#feedf5",
   },
   {
     id: "timing",
     label: "Timing pattern",
     description: "Determines the width and number of cells in the code.",
-    dark: "#3b82f6",
-    light: "#d7e6fd",
+    dark: "#4c8df7",
+    light: "#ecf3ff",
   },
   {
     id: "format",
     label: "Format info",
     description: "Stores the error-correction level and the mask pattern.",
-    dark: "#f5c518",
-    light: "#fbeeb4",
+    dark: "#fbd12b",
+    light: "#fffae8",
+  },
+  {
+    id: "darkModule",
+    label: "Dark module",
+    description: "A single module that is always dark and carries no data.",
+    dark: "#18181b",
+    light: "#18181b",
   },
   {
     id: "data",
     label: "Data",
     description: "The encoded message — mode, length, your bytes and padding.",
-    dark: "#10b981",
-    light: "#d4f4e7",
+    dark: "#25c08d",
+    light: "#e8f9f3",
   },
   {
     id: "ec",
     label: "Error correction",
     description: "Reed-Solomon codewords that recover the code if it's damaged.",
-    dark: "#a855f7",
-    light: "#e9d6fc",
+    dark: "#b065f8",
+    light: "#fcf4ff",
   },
 ];
 
@@ -83,7 +91,7 @@ export const ROLE_CATEGORY: Record<ModuleRole, CategoryId> = {
   alignment: "alignment",
   format: "format",
   version: "format",
-  darkModule: "format",
+  darkModule: "darkModule",
   mode: "data",
   count: "data",
   message: "data",
@@ -125,7 +133,7 @@ export const ROLE_INFO: Record<ModuleRole, { label: string; description: string 
     },
     darkModule: {
       label: "Dark module",
-      description: "A module that is always dark.",
+      description: "Always dark — fixed by the spec, carries no data.",
     },
     mode: {
       label: "Mode indicator",

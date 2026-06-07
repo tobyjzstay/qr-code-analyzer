@@ -2,9 +2,10 @@
 
 import { CategoryId, moduleColor, ROLE_CATEGORY } from "@/lib/qr/roles";
 import type { QRAnalysis, QRModule } from "@/lib/qr/types";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useId, useMemo, useRef } from "react";
 
 const QUIET = 4; // quiet-zone width in modules
+const OUTLINE_STROKE = 0.1; // stroke width of the byte / mode / length outlines
 
 interface Props {
   analysis: QRAnalysis;
@@ -17,16 +18,73 @@ interface Props {
   onHover: (module: QRModule | null) => void;
 }
 
-/** Build an SVG path that traces the boundary of a set of unit cells. */
+/**
+ * Trace the boundary of a set of unit cells as connected closed loops, drawn
+ * exactly on the integer grid lines (so every edge is straight and axis
+ * aligned). The result is used both as a stroke and as a clip region; the
+ * caller clips the stroke to the cells so it stays inside them.
+ */
 function outlinePath(cells: [number, number][]): string {
-  const key = (r: number, c: number) => r * 1000 + c;
-  const set = new Set(cells.map(([r, c]) => key(r, c)));
-  let d = "";
+  const cellKey = (r: number, c: number) => r * 1000 + c;
+  const filled = new Set(cells.map(([r, c]) => cellKey(r, c)));
+  const has = (r: number, c: number) => filled.has(cellKey(r, c));
+
+  // Directed boundary edges, keyed by start vertex (walking a cell's edges
+  // TL→TR→BR→BL→TL keeps the interior on a consistent side).
+  const out = new Map<string, [number, number][]>();
+  const add = (x1: number, y1: number, x2: number, y2: number) => {
+    const k = `${x1},${y1}`;
+    const list = out.get(k);
+    if (list) list.push([x2, y2]);
+    else out.set(k, [[x2, y2]]);
+  };
   for (const [r, c] of cells) {
-    if (!set.has(key(r - 1, c))) d += `M${c} ${r}h1`; // top
-    if (!set.has(key(r + 1, c))) d += `M${c} ${r + 1}h1`; // bottom
-    if (!set.has(key(r, c - 1))) d += `M${c} ${r}v1`; // left
-    if (!set.has(key(r, c + 1))) d += `M${c + 1} ${r}v1`; // right
+    if (!has(r - 1, c)) add(c, r, c + 1, r); // top
+    if (!has(r, c + 1)) add(c + 1, r, c + 1, r + 1); // right
+    if (!has(r + 1, c)) add(c + 1, r + 1, c, r + 1); // bottom
+    if (!has(r, c - 1)) add(c, r + 1, c, r); // left
+  }
+
+  // Stitch edges into closed loops (every vertex has equal in/out degree, so
+  // following unused edges from a start vertex returns to it).
+  const loops: [number, number][][] = [];
+  for (const startKey of out.keys()) {
+    while ((out.get(startKey)?.length ?? 0) > 0) {
+      const [sx, sy] = startKey.split(",").map(Number);
+      const verts: [number, number][] = [[sx, sy]];
+      let curKey = startKey;
+      for (;;) {
+        const nexts = out.get(curKey);
+        if (!nexts || nexts.length === 0) break;
+        const [nx, ny] = nexts.shift()!;
+        curKey = `${nx},${ny}`;
+        if (curKey === startKey) break; // closed — don't repeat the start
+        verts.push([nx, ny]);
+      }
+      loops.push(verts);
+    }
+  }
+
+  let d = "";
+  for (const loop of loops) {
+    // Drop collinear vertices so only true corners remain (shorter paths).
+    const corners = loop.filter((cur, i) => {
+      const prev = loop[(i - 1 + loop.length) % loop.length];
+      const next = loop[(i + 1) % loop.length];
+      return (
+        (cur[0] - prev[0]) * (next[1] - cur[1]) -
+          (cur[1] - prev[1]) * (next[0] - cur[0]) !==
+        0
+      );
+    });
+    if (corners.length < 3) continue;
+    d +=
+      `M${corners[0][0]} ${corners[0][1]}` +
+      corners
+        .slice(1)
+        .map((p) => `L${p[0]} ${p[1]}`)
+        .join("") +
+      "Z";
   }
   return d;
 }
@@ -64,31 +122,51 @@ export default function QRGrid({
   const { size, modules, characters } = analysis;
   const dim = size + QUIET * 2;
   const svgRef = useRef<SVGSVGElement>(null);
+  const uid = useId().replace(/:/g, ""); // unique, selector-safe clip ids
 
-  // Footprint outlines for each message byte, plus the mode / length regions.
+  // Outlines for the message bytes (one shared perimeter + single dividers
+  // between adjacent characters, so shared edges aren't drawn twice), the
+  // mode / length regions, and the per-character label positions.
   const overlays = useMemo(() => {
+    const ck = (r: number, c: number) => r * 1000 + c;
     const modeCells: [number, number][] = [];
     const countCells: [number, number][] = [];
+    const msgCells: [number, number][] = [];
+    const byteOf = new Map<number, number>();
     for (const row of modules) {
       for (const m of row) {
         if (m.role === "mode") modeCells.push([m.row, m.col]);
         else if (m.role === "count") countCells.push([m.row, m.col]);
+        else if (m.role === "message" && m.byteIndex != null) {
+          msgCells.push([m.row, m.col]);
+          byteOf.set(ck(m.row, m.col), m.byteIndex);
+        }
       }
     }
-    const bytes = characters
+    // Dividers between neighbouring cells of different characters, counted once
+    // (look only right + down) and drawn centred on the shared grid line.
+    let dividers = "";
+    for (const [r, c] of msgCells) {
+      const b = byteOf.get(ck(r, c));
+      const right = byteOf.get(ck(r, c + 1));
+      if (right !== undefined && right !== b) dividers += `M${c + 1} ${r}L${c + 1} ${r + 1}`;
+      const down = byteOf.get(ck(r + 1, c));
+      if (down !== undefined && down !== b) dividers += `M${c} ${r + 1}L${c + 1} ${r + 1}`;
+    }
+
+    const letters = characters
       .filter((ch) => ch.cells.length > 0)
       .map((ch) => {
         const [cx, cy] = centroid(ch.cells);
-        return { char: ch.char, path: outlinePath(ch.cells), cx, cy };
+        return { char: ch.char, cx, cy };
       });
+
     return {
-      bytes,
-      mode: modeCells.length
-        ? { path: outlinePath(modeCells), c: centroid(modeCells) }
-        : null,
-      count: countCells.length
-        ? { path: outlinePath(countCells), c: centroid(countCells) }
-        : null,
+      msgUnion: outlinePath(msgCells),
+      dividers,
+      letters,
+      modeUnion: modeCells.length ? outlinePath(modeCells) : null,
+      countUnion: countCells.length ? outlinePath(countCells) : null,
     };
   }, [modules, characters]);
 
@@ -135,7 +213,7 @@ export default function QRGrid({
     <svg
       ref={svgRef}
       viewBox={`0 0 ${dim} ${dim}`}
-      className="h-auto w-full select-none rounded-xl"
+      className="h-auto w-full select-none"
       shapeRendering="crispEdges"
       onMouseMove={handleMove}
       onMouseLeave={() => onHover(null)}
@@ -146,6 +224,13 @@ export default function QRGrid({
       <g transform={`translate(${QUIET} ${QUIET})`}>
         {modules.flat().map((m) => {
           const muted = highlight != null && ROLE_CATEGORY[m.role] !== highlight;
+          // Muted modules drop to neutral greys so the highlighted category
+          // stands out: dark pixels become #f1f1f1, light pixels #fefefe.
+          const fill = muted
+            ? m.dark
+              ? "#f1f1f1"
+              : "#fefefe"
+            : moduleColor(m.role, m.dark);
           return (
             <rect
               key={`${m.row}-${m.col}`}
@@ -153,8 +238,7 @@ export default function QRGrid({
               y={m.row}
               width={1.02}
               height={1.02}
-              fill={moduleColor(m.role, m.dark)}
-              opacity={muted ? 0.08 : 1}
+              fill={fill}
             />
           );
         })}
@@ -186,56 +270,82 @@ export default function QRGrid({
           </g>
         )}
 
-        {/* Byte footprints + characters */}
+        {/* Byte footprints + characters. Each region's border is drawn on the
+            grid lines (always straight) at double width and clipped to that
+            region's cells, so only the inner half shows — a clean line sitting
+            just inside the cells with no bleed or offset artefacts. */}
         {showChars && (
           <g shapeRendering="geometricPrecision">
-            {overlays.mode && (
-              <path d={overlays.mode.path} fill="none" stroke="#2563eb" strokeWidth={0.18} />
-            )}
-            {overlays.count && (
-              <>
+            <defs>
+              <clipPath id={`m${uid}`}>
+                <path d={overlays.msgUnion} />
+              </clipPath>
+              {overlays.modeUnion && (
+                <clipPath id={`o${uid}`}>
+                  <path d={overlays.modeUnion} />
+                </clipPath>
+              )}
+              {overlays.countUnion && (
+                <clipPath id={`c${uid}`}>
+                  <path d={overlays.countUnion} />
+                </clipPath>
+              )}
+            </defs>
+
+            <g clipPath={`url(#m${uid})`}>
+              <path
+                d={overlays.msgUnion}
+                fill="none"
+                stroke="#0fb880"
+                strokeWidth={OUTLINE_STROKE * 2}
+                strokeLinejoin="miter"
+              />
+              <path
+                d={overlays.dividers}
+                fill="none"
+                stroke="#0fb880"
+                strokeWidth={OUTLINE_STROKE}
+                strokeLinecap="square"
+              />
+            </g>
+
+            {overlays.modeUnion && (
+              <g clipPath={`url(#o${uid})`}>
                 <path
-                  d={overlays.count.path}
+                  d={overlays.modeUnion}
                   fill="none"
-                  stroke="#2563eb"
-                  strokeWidth={0.18}
+                  stroke="#3b82f6"
+                  strokeWidth={OUTLINE_STROKE * 2}
+                  strokeLinejoin="miter"
                 />
-                <text
-                  x={overlays.count.c[0]}
-                  y={overlays.count.c[1]}
-                  fontSize={2}
-                  fontFamily="var(--font-mono, monospace)"
-                  fontWeight={700}
-                  textAnchor="middle"
-                  dominantBaseline="central"
-                  fill="#1d4ed8"
-                  style={{ paintOrder: "stroke" }}
-                  stroke="#ffffff"
-                  strokeWidth={0.5}
-                >
-                  {analysis.byteCount}
-                </text>
-              </>
-            )}
-            {overlays.bytes.map((b, i) => (
-              <g key={i}>
-                <path d={b.path} fill="none" stroke="#059669" strokeWidth={0.18} />
-                <text
-                  x={b.cx}
-                  y={b.cy}
-                  fontSize={2.2}
-                  fontFamily="var(--font-mono, monospace)"
-                  fontWeight={700}
-                  textAnchor="middle"
-                  dominantBaseline="central"
-                  fill="#065f46"
-                  style={{ paintOrder: "stroke" }}
-                  stroke="#ffffff"
-                  strokeWidth={0.55}
-                >
-                  {b.char === " " ? "␣" : b.char}
-                </text>
               </g>
+            )}
+            {overlays.countUnion && (
+              <g clipPath={`url(#c${uid})`}>
+                <path
+                  d={overlays.countUnion}
+                  fill="none"
+                  stroke="#3b82f6"
+                  strokeWidth={OUTLINE_STROKE * 2}
+                  strokeLinejoin="miter"
+                />
+              </g>
+            )}
+
+            {overlays.letters.map((b, i) => (
+              <text
+                key={i}
+                x={b.cx}
+                y={b.cy}
+                fontSize={1.5}
+                fontFamily="var(--font-mono, monospace)"
+                fontWeight={700}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill="#0fb880"
+              >
+                {b.char === " " ? "␣" : b.char}
+              </text>
             ))}
           </g>
         )}
