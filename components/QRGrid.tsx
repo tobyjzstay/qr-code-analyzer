@@ -7,6 +7,15 @@ import { useCallback, useId, useMemo, useRef, useState } from "react";
 const QUIET = 4; // quiet-zone width in modules
 const OUTLINE_STROKE = 0.1; // stroke width of the byte / mode / length outlines
 
+// Segment groups and their colours. "data" = message + padding (green),
+// "header" = mode + length indicator (blue), "ec" = error correction (purple).
+type SegmentId = "data" | "header" | "ec";
+const OUTLINE_COLOR: Record<SegmentId, string> = {
+  data: "#0fb880",
+  header: "#3b82f6",
+  ec: "#7c3aed",
+};
+
 interface Props {
   analysis: QRAnalysis;
   /** Outline each byte's footprint and draw its character. */
@@ -101,17 +110,10 @@ function centroid(cells: [number, number][]): [number, number] {
   return [sc / cells.length, sr / cells.length];
 }
 
-/** Triangle points for an arrowhead whose tip sits at (x2,y2). */
-function arrowHead(x1: number, y1: number, x2: number, y2: number, size = 0.7): string {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len;
-  const uy = dy / len;
-  const bx = x2 - ux * size;
-  const by = y2 - uy * size;
-  const half = size * 0.42;
-  return `${x2},${y2} ${bx - uy * half},${by + ux * half} ${bx + uy * half},${by - ux * half}`;
+/** Unicode arrow glyph for a cardinal direction (y grows downward). */
+function arrowGlyph(dx: number, dy: number): string {
+  if (Math.abs(dy) >= Math.abs(dx)) return dy < 0 ? "▲" : "▼";
+  return dx < 0 ? "◄" : "►";
 }
 
 export default function QRGrid({
@@ -127,35 +129,66 @@ export default function QRGrid({
   const svgRef = useRef<SVGSVGElement>(null);
   const uid = useId().replace(/:/g, ""); // unique, selector-safe clip ids
 
-  // Outlines for the message bytes (one shared perimeter + single dividers
-  // between adjacent characters, so shared edges aren't drawn twice), the
-  // mode / length regions, and the per-character label positions.
+  // Outlines for each segment group, coloured by category. Each group gets one
+  // shared perimeter (clipped to its cells) plus single dividers between its
+  // units (message bytes, or individual codewords), so shared edges aren't
+  // drawn twice. Also the per-character label positions.
   const overlays = useMemo(() => {
     const ck = (r: number, c: number) => r * 1000 + c;
-    const modeCells: [number, number][] = [];
-    const countCells: [number, number][] = [];
-    const msgCells: [number, number][] = [];
-    const byteOf = new Map<number, number>();
+    const cells: Record<SegmentId, [number, number][]> = { data: [], header: [], ec: [] };
+    const unit = new Map<number, string>(); // cellKey -> unit id (for dividers)
+
     for (const row of modules) {
       for (const m of row) {
-        if (m.role === "mode") modeCells.push([m.row, m.col]);
-        else if (m.role === "count") countCells.push([m.row, m.col]);
-        else if (m.role === "message" && m.byteIndex != null) {
-          msgCells.push([m.row, m.col]);
-          byteOf.set(ck(m.row, m.col), m.byteIndex);
+        let group: SegmentId | null = null;
+        let u = "";
+        switch (m.role) {
+          case "message":
+            group = "data";
+            u = `b${m.byteIndex}`;
+            break;
+          case "padding":
+          case "terminator":
+          case "remainder":
+            group = "data";
+            u = `d${m.codewordIndex ?? `${m.row}_${m.col}`}`;
+            break;
+          case "mode":
+            group = "header";
+            u = "mode";
+            break;
+          case "count":
+            group = "header";
+            u = "count";
+            break;
+          case "ec":
+            group = "ec";
+            u = `e${m.codewordIndex}`;
+            break;
         }
+        if (!group) continue;
+        cells[group].push([m.row, m.col]);
+        unit.set(ck(m.row, m.col), u);
       }
     }
-    // Dividers between neighbouring cells of different characters, counted once
-    // (look only right + down) and drawn centred on the shared grid line.
-    let dividers = "";
-    for (const [r, c] of msgCells) {
-      const b = byteOf.get(ck(r, c));
-      const right = byteOf.get(ck(r, c + 1));
-      if (right !== undefined && right !== b) dividers += `M${c + 1} ${r}L${c + 1} ${r + 1}`;
-      const down = byteOf.get(ck(r + 1, c));
-      if (down !== undefined && down !== b) dividers += `M${c} ${r + 1}L${c + 1} ${r + 1}`;
-    }
+
+    const groups = (["data", "header", "ec"] as SegmentId[])
+      .map((id) => {
+        const cs = cells[id];
+        if (cs.length === 0) return null;
+        const inGroup = new Set(cs.map(([r, c]) => ck(r, c)));
+        // Dividers between adjacent cells of different units within this group.
+        let dividers = "";
+        for (const [r, c] of cs) {
+          const u = unit.get(ck(r, c));
+          const rk = ck(r, c + 1);
+          if (inGroup.has(rk) && unit.get(rk) !== u) dividers += `M${c + 1} ${r}L${c + 1} ${r + 1}`;
+          const dk = ck(r + 1, c);
+          if (inGroup.has(dk) && unit.get(dk) !== u) dividers += `M${c} ${r + 1}L${c + 1} ${r + 1}`;
+        }
+        return { id, union: outlinePath(cs), dividers };
+      })
+      .filter((g): g is { id: SegmentId; union: string; dividers: string } => g !== null);
 
     const letters = characters
       .filter((ch) => ch.cells.length > 0)
@@ -164,36 +197,48 @@ export default function QRGrid({
         return { char: ch.char, cx, cy };
       });
 
-    return {
-      msgUnion: outlinePath(msgCells),
-      dividers,
-      letters,
-      modeUnion: modeCells.length ? outlinePath(modeCells) : null,
-      countUnion: countCells.length ? outlinePath(countCells) : null,
-    };
+    return { groups, letters };
   }, [modules, characters]);
 
-  // Centroid of each codeword, in placement order, for the direction arrows.
+  // Reading order: one arrow glyph per codeword at its centroid, pointing in
+  // its cardinal direction of travel and coloured by segment.
   const arrows = useMemo(() => {
-    const acc = new Map<number, { sr: number; sc: number; n: number }>();
+    const acc = new Map<
+      number,
+      { sr: number; sc: number; n: number; ec: boolean; msg: boolean; hdr: boolean }
+    >();
     for (const row of modules) {
       for (const m of row) {
         if (m.codewordIndex == null) continue;
-        const a = acc.get(m.codewordIndex) ?? { sr: 0, sc: 0, n: 0 };
+        const a =
+          acc.get(m.codewordIndex) ??
+          { sr: 0, sc: 0, n: 0, ec: false, msg: false, hdr: false };
         a.sr += m.row + 0.5;
         a.sc += m.col + 0.5;
         a.n += 1;
+        if (m.role === "ec") a.ec = true;
+        else if (m.role === "message") a.msg = true;
+        else if (m.role === "mode" || m.role === "count") a.hdr = true;
         acc.set(m.codewordIndex, a);
       }
     }
     const pts = [...acc.entries()]
       .sort((a, b) => a[0] - b[0])
-      .map(([, a]) => ({ x: a.sc / a.n, y: a.sr / a.n }));
-    const segs: { x1: number; y1: number; x2: number; y2: number; start: boolean }[] = [];
-    for (let i = 0; i < pts.length - 1; i++) {
-      segs.push({ x1: pts[i].x, y1: pts[i].y, x2: pts[i + 1].x, y2: pts[i + 1].y, start: i === 0 });
-    }
-    return { segs, first: pts[0] ?? null };
+      .map(([, a]) => ({
+        x: a.sc / a.n,
+        y: a.sr / a.n,
+        color: (a.ec ? "ec" : a.msg ? "data" : a.hdr ? "header" : "data") as SegmentId,
+      }));
+
+    return pts.map((p, i) => {
+      const next = pts[i + 1] ?? p;
+      const prev = pts[i - 1] ?? p;
+      // direction of travel: toward the next codeword (or from the previous one
+      // for the final codeword)
+      const dx = i < pts.length - 1 ? next.x - p.x : p.x - prev.x;
+      const dy = i < pts.length - 1 ? next.y - p.y : p.y - prev.y;
+      return { x: p.x, y: p.y, glyph: arrowGlyph(dx, dy), color: p.color };
+    });
   }, [modules]);
 
   const [clickable, setClickable] = useState(false);
@@ -267,110 +312,75 @@ export default function QRGrid({
           );
         })}
 
-        {/* Reading-order arrows */}
-        {showDirection && (
-          <g shapeRendering="geometricPrecision">
-            {arrows.first && (
-              <circle cx={arrows.first.x} cy={arrows.first.y} r={0.35} fill="#2563eb" />
-            )}
-            {arrows.segs.map((s, i) => {
-              const color = s.start ? "#2563eb" : "#059669";
-              return (
-                <g key={i}>
-                  <line
-                    x1={s.x1}
-                    y1={s.y1}
-                    x2={s.x2}
-                    y2={s.y2}
-                    stroke={color}
-                    strokeWidth={0.16}
-                    strokeLinecap="round"
-                    opacity={0.85}
-                  />
-                  <polygon points={arrowHead(s.x1, s.y1, s.x2, s.y2)} fill={color} />
-                </g>
-              );
-            })}
-          </g>
-        )}
-
-        {/* Byte footprints + characters. Each region's border is drawn on the
-            grid lines (always straight) at double width and clipped to that
-            region's cells, so only the inner half shows — a clean line sitting
-            just inside the cells with no bleed or offset artefacts. */}
-        {showChars && (
+        {/* Segment overlays. Each group's border is drawn on the grid lines at
+            double width and clipped to its own cells, so only the inner half
+            shows — a straight line sitting just inside the cells. Shown for
+            either toggle; direction adds the rounded flow arrows, characters
+            adds the letters. */}
+        {(showChars || showDirection) && (
           <g shapeRendering="geometricPrecision">
             <defs>
-              <clipPath id={`m${uid}`}>
-                <path d={overlays.msgUnion} />
-              </clipPath>
-              {overlays.modeUnion && (
-                <clipPath id={`o${uid}`}>
-                  <path d={overlays.modeUnion} />
+              {overlays.groups.map((g) => (
+                <clipPath key={g.id} id={`${g.id}${uid}`}>
+                  <path d={g.union} />
                 </clipPath>
-              )}
-              {overlays.countUnion && (
-                <clipPath id={`c${uid}`}>
-                  <path d={overlays.countUnion} />
-                </clipPath>
-              )}
+              ))}
             </defs>
 
-            <g clipPath={`url(#m${uid})`}>
-              <path
-                d={overlays.msgUnion}
-                fill="none"
-                stroke="#0fb880"
-                strokeWidth={OUTLINE_STROKE * 2}
-                strokeLinejoin="miter"
-              />
-              <path
-                d={overlays.dividers}
-                fill="none"
-                stroke="#0fb880"
-                strokeWidth={OUTLINE_STROKE}
-                strokeLinecap="square"
-              />
-            </g>
-
-            {overlays.modeUnion && (
-              <g clipPath={`url(#o${uid})`}>
+            {overlays.groups.map((g) => (
+              <g key={g.id} clipPath={`url(#${g.id}${uid})`}>
                 <path
-                  d={overlays.modeUnion}
+                  d={g.union}
                   fill="none"
-                  stroke="#3b82f6"
+                  stroke={OUTLINE_COLOR[g.id]}
                   strokeWidth={OUTLINE_STROKE * 2}
                   strokeLinejoin="miter"
                 />
+                {g.dividers && (
+                  <path
+                    d={g.dividers}
+                    fill="none"
+                    stroke={OUTLINE_COLOR[g.id]}
+                    strokeWidth={OUTLINE_STROKE}
+                    strokeLinecap="square"
+                  />
+                )}
               </g>
-            )}
-            {overlays.countUnion && (
-              <g clipPath={`url(#c${uid})`}>
-                <path
-                  d={overlays.countUnion}
-                  fill="none"
-                  stroke="#3b82f6"
-                  strokeWidth={OUTLINE_STROKE * 2}
-                  strokeLinejoin="miter"
-                />
-              </g>
-            )}
-
-            {overlays.letters.map((b, i) => (
-              <text
-                key={i}
-                x={b.cx}
-                y={b.cy}
-                fontSize={1.5}
-                fontFamily="var(--font-mono, monospace)"
-                fontWeight={700}
-                textAnchor="middle"
-                dominantBaseline="central"
-                fill="#0fb880"
-              >
-                {b.char === " " ? "␣" : b.char}
-              </text>
             ))}
+
+            {showDirection &&
+              arrows.map((a, i) => (
+                <text
+                  key={`arrow${i}`}
+                  x={a.x}
+                  y={a.y}
+                  fontSize={1}
+                  fontFamily="var(--font-mono, monospace)"
+                  fontWeight={700}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fill={OUTLINE_COLOR[a.color]}
+                >
+                  {a.glyph}
+                </text>
+              ))}
+
+            {showChars &&
+              overlays.letters.map((b, i) => (
+                <text
+                  key={i}
+                  x={b.cx}
+                  y={b.cy}
+                  fontSize={1.5}
+                  fontFamily="var(--font-mono, monospace)"
+                  fontWeight={700}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fill="#0fb880"
+                >
+                  {b.char === " " ? "␣" : b.char}
+                </text>
+              ))}
           </g>
         )}
       </g>

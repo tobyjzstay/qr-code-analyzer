@@ -29,8 +29,8 @@ export default function Analyzer() {
   // editing a data bit only changes that bit + the error correction, not the
   // whole masked appearance).
   const [mask, setMask] = useState<number | undefined>(undefined);
-  const [showChars, setShowChars] = useState(true);
-  const [showDirection, setShowDirection] = useState(false);
+  // Which overlay to show on top of the symbol (mutually exclusive).
+  const [overlay, setOverlay] = useState<"chars" | "direction" | "none">("chars");
   const [highlight, setHighlight] = useState<CategoryId | null>(null);
   const [hovered, setHovered] = useState<QRModule | null>(null);
 
@@ -116,26 +116,32 @@ export default function Analyzer() {
           </select>
         </label>
 
-        <div className="flex flex-col gap-1.5 py-1">
-          <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-            <input
-              type="checkbox"
-              checked={showChars}
-              onChange={(e) => setShowChars(e.target.checked)}
-              className="size-4 rounded border-zinc-300 accent-emerald-600"
-            />
-            Show characters
-          </label>
-          <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-            <input
-              type="checkbox"
-              checked={showDirection}
-              onChange={(e) => setShowDirection(e.target.checked)}
-              className="size-4 rounded border-zinc-300 accent-emerald-600"
-            />
-            Show reading order
-          </label>
-        </div>
+        <fieldset className="flex flex-col gap-1.5 py-1">
+          <legend className="mb-0.5 text-xs font-medium uppercase tracking-wide text-zinc-500">
+            Overlay
+          </legend>
+          {(
+            [
+              { value: "chars", label: "Characters" },
+              { value: "direction", label: "Reading order" },
+              { value: "none", label: "None" },
+            ] as const
+          ).map((o) => (
+            <label
+              key={o.value}
+              className="flex cursor-pointer select-none items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300"
+            >
+              <input
+                type="radio"
+                name="overlay"
+                checked={overlay === o.value}
+                onChange={() => setOverlay(o.value)}
+                className="size-4 border-zinc-300 accent-emerald-600"
+              />
+              {o.label}
+            </label>
+          ))}
+        </fieldset>
       </div>
 
       {error && (
@@ -151,8 +157,8 @@ export default function Analyzer() {
             <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 sm:p-6">
               <QRGrid
                 analysis={analysis}
-                showChars={showChars}
-                showDirection={showDirection}
+                showChars={overlay === "chars"}
+                showDirection={overlay === "direction"}
                 highlight={highlight}
                 onHover={setHovered}
                 onToggle={toggleBit}
