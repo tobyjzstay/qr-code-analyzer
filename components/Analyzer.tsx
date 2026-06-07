@@ -18,6 +18,7 @@ export default function Analyzer() {
   const [text, setText] = useState("https://www.anthropic.com/claude-code");
   const [ecLevel, setEcLevel] = useState<ECLevel>("M");
   const [showChars, setShowChars] = useState(true);
+  const [showDirection, setShowDirection] = useState(false);
   const [highlight, setHighlight] = useState<CategoryId | null>(null);
   const [hovered, setHovered] = useState<QRModule | null>(null);
 
@@ -78,15 +79,26 @@ export default function Analyzer() {
           </select>
         </label>
 
-        <label className="flex cursor-pointer select-none items-center gap-2 py-2 text-sm text-zinc-700 dark:text-zinc-300">
-          <input
-            type="checkbox"
-            checked={showChars}
-            onChange={(e) => setShowChars(e.target.checked)}
-            className="size-4 rounded border-zinc-300 accent-emerald-600"
-          />
-          Show characters
-        </label>
+        <div className="flex flex-col gap-1.5 py-1">
+          <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              checked={showChars}
+              onChange={(e) => setShowChars(e.target.checked)}
+              className="size-4 rounded border-zinc-300 accent-emerald-600"
+            />
+            Show characters
+          </label>
+          <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              checked={showDirection}
+              onChange={(e) => setShowDirection(e.target.checked)}
+              className="size-4 rounded border-zinc-300 accent-emerald-600"
+            />
+            Show reading order
+          </label>
+        </div>
       </div>
 
       {error && (
@@ -103,6 +115,7 @@ export default function Analyzer() {
               <QRGrid
                 analysis={analysis}
                 showChars={showChars}
+                showDirection={showDirection}
                 highlight={highlight}
                 onHover={setHovered}
               />
