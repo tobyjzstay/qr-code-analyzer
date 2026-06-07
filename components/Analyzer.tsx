@@ -1,0 +1,201 @@
+"use client";
+
+import { analyze } from "@/lib/qr/analyze";
+import { ROLE_STYLES } from "@/lib/qr/roles";
+import type { ECLevel, ModuleRole, QRAnalysis, QRModule } from "@/lib/qr/types";
+import { useMemo, useState } from "react";
+import Legend from "./Legend";
+import QRGrid from "./QRGrid";
+
+const EC_LEVELS: { value: ECLevel; label: string }[] = [
+  { value: "L", label: "L · 7%" },
+  { value: "M", label: "M · 15%" },
+  { value: "Q", label: "Q · 25%" },
+  { value: "H", label: "H · 30%" },
+];
+
+export default function Analyzer() {
+  const [text, setText] = useState("https://www.anthropic.com/claude-code");
+  const [ecLevel, setEcLevel] = useState<ECLevel>("M");
+  const [showChars, setShowChars] = useState(true);
+  const [highlightRole, setHighlightRole] = useState<ModuleRole | null>(null);
+  const [hovered, setHovered] = useState<QRModule | null>(null);
+
+  const { analysis, error } = useMemo(() => {
+    if (text.length === 0) {
+      return { analysis: null, error: "Type something to encode." };
+    }
+    try {
+      return { analysis: analyze(text, { errorCorrectionLevel: ecLevel }), error: null };
+    } catch (e) {
+      return { analysis: null, error: (e as Error).message };
+    }
+  }, [text, ecLevel]);
+
+  return (
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-10 sm:px-6 lg:px-8">
+      <header className="flex flex-col gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+          QR Code Analyzer
+        </h1>
+        <p className="max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+          Type any text and watch it get encoded into a real, scannable QR
+          symbol. Every module is coloured by its job — the message bytes, the
+          error-correction codewords, the finder and timing patterns, and more.
+          Hover the grid or the legend to explore.
+        </p>
+      </header>
+
+      {/* Controls */}
+      <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950 sm:flex-row sm:items-end">
+        <label className="flex flex-1 flex-col gap-1.5">
+          <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+            Data
+          </span>
+          <input
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Enter a URL or any text…"
+            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition-colors focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-zinc-700"
+          />
+        </label>
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+            Error correction
+          </span>
+          <select
+            value={ecLevel}
+            onChange={(e) => setEcLevel(e.target.value as ECLevel)}
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-zinc-700"
+          >
+            {EC_LEVELS.map((l) => (
+              <option key={l.value} value={l.value}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex cursor-pointer select-none items-center gap-2 py-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input
+            type="checkbox"
+            checked={showChars}
+            onChange={(e) => setShowChars(e.target.checked)}
+            className="size-4 rounded border-zinc-300 accent-emerald-600"
+          />
+          Show characters
+        </label>
+      </div>
+
+      {error && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          {error}
+        </div>
+      )}
+
+      {analysis && (
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          {/* QR + hovered readout */}
+          <div className="flex flex-col gap-3">
+            <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 sm:p-6">
+              <QRGrid
+                analysis={analysis}
+                showChars={showChars}
+                highlightRole={highlightRole}
+                onHover={setHovered}
+              />
+            </div>
+            <HoverReadout module={hovered} analysis={analysis} />
+          </div>
+
+          {/* Stats + legend */}
+          <aside className="flex flex-col gap-6">
+            <Stats analysis={analysis} />
+            <Legend
+              analysis={analysis}
+              highlightRole={highlightRole}
+              onHighlight={setHighlightRole}
+            />
+          </aside>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HoverReadout({
+  module,
+  analysis,
+}: {
+  module: QRModule | null;
+  analysis: QRAnalysis;
+}) {
+  if (!module) {
+    return (
+      <p className="px-1 text-sm text-zinc-400">
+        Hover over a module to inspect it.
+      </p>
+    );
+  }
+  const style = ROLE_STYLES[module.role];
+  const details: string[] = [`row ${module.row}, col ${module.col}`];
+  details.push(module.dark ? "dark (1)" : "light (0)");
+  if (module.codewordIndex != null) {
+    details.push(`codeword #${module.codewordIndex}`);
+    if (analysis.blocks > 1 && module.blockIndex != null) {
+      details.push(`block ${module.blockIndex + 1}/${analysis.blocks}`);
+    }
+    if (module.bitIndex != null) details.push(`bit ${7 - module.bitIndex}`);
+  }
+  if (module.role === "message" && module.byteIndex != null) {
+    const ch = analysis.characters[module.byteIndex];
+    if (ch) details.push(`character “${ch.char}” (0x${ch.code.toString(16).padStart(2, "0")})`);
+  }
+
+  return (
+    <div className="flex items-start gap-2.5 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm dark:border-zinc-800 dark:bg-zinc-950">
+      <span
+        className="mt-0.5 size-3.5 shrink-0 rounded-sm ring-1 ring-black/10"
+        style={{ backgroundColor: style.dark }}
+      />
+      <span className="min-w-0">
+        <span className="font-medium text-zinc-900 dark:text-zinc-100">
+          {style.label}
+        </span>
+        <span className="text-zinc-500 dark:text-zinc-400"> — {details.join(" · ")}</span>
+      </span>
+    </div>
+  );
+}
+
+function Stats({ analysis }: { analysis: QRAnalysis }) {
+  const rows: [string, string][] = [
+    ["Version", `${analysis.version}`],
+    ["Size", `${analysis.size} × ${analysis.size}`],
+    ["EC level", analysis.errorCorrectionLevel],
+    ["Mask", `${analysis.maskPattern}`],
+    ["Input", `${analysis.byteCount} byte${analysis.byteCount === 1 ? "" : "s"}`],
+    ["Data codewords", `${analysis.dataCodewords}`],
+    ["EC codewords", `${analysis.ecCodewords}`],
+    [
+      "Blocks",
+      analysis.blocks === 1
+        ? "1"
+        : `${analysis.blocks} × ${analysis.ecPerBlock} EC`,
+    ],
+  ];
+  return (
+    <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+      {rows.map(([k, v]) => (
+        <div key={k} className="flex flex-col">
+          <dt className="text-xs uppercase tracking-wide text-zinc-400">{k}</dt>
+          <dd className="text-sm font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+            {v}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}

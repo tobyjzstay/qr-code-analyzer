@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify:qr": "tsx scripts/verify-qr.mjs"
   },
   "dependencies": {
     "next": "16.2.7",
@@ -14,13 +15,17 @@
     "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@tailwindcss/oxide-linux-x64-gnu": "4.3.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.7",
+    "qrcode": "^1.5.4",
     "tailwindcss": "^4",
+    "tsx": "^4.22.4",
     "typescript": "^5"
   }
 }
