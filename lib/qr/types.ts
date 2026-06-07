@@ -42,6 +42,8 @@ export interface QRModule {
   bitIndex?: number;
   /** For `message` modules: index of the input byte this bit belongs to. */
   byteIndex?: number;
+  /** For `message` modules: which bit of that byte (0 = LSB … 7 = MSB). */
+  bitOfByte?: number;
 }
 
 /** One decoded character (byte) of the message and the cells that encode it. */

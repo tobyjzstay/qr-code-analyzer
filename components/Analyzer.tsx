@@ -14,24 +14,56 @@ const EC_LEVELS: { value: ECLevel; label: string }[] = [
   { value: "H", label: "H · 30%" },
 ];
 
+const DEFAULT_TEXT = "https://www.anthropic.com/claude-code";
+
 export default function Analyzer() {
-  const [text, setText] = useState("https://www.anthropic.com/claude-code");
+  // `bytes` is the source of truth for the encoded data; `text` mirrors it for
+  // the input box. Flipping a bit edits `bytes` directly (the result may not be
+  // valid text), so the two can diverge.
+  const [text, setText] = useState(DEFAULT_TEXT);
+  const [bytes, setBytes] = useState<Uint8Array>(() =>
+    new TextEncoder().encode(DEFAULT_TEXT),
+  );
   const [ecLevel, setEcLevel] = useState<ECLevel>("M");
+  // undefined = auto-pick the best mask; a number = keep that mask fixed (so
+  // editing a data bit only changes that bit + the error correction, not the
+  // whole masked appearance).
+  const [mask, setMask] = useState<number | undefined>(undefined);
   const [showChars, setShowChars] = useState(true);
   const [showDirection, setShowDirection] = useState(false);
   const [highlight, setHighlight] = useState<CategoryId | null>(null);
   const [hovered, setHovered] = useState<QRModule | null>(null);
 
   const { analysis, error } = useMemo(() => {
-    if (text.length === 0) {
+    if (bytes.length === 0) {
       return { analysis: null, error: "Type something to encode." };
     }
     try {
-      return { analysis: analyze(text, { errorCorrectionLevel: ecLevel }), error: null };
+      return {
+        analysis: analyze(bytes, { errorCorrectionLevel: ecLevel, mask }),
+        error: null,
+      };
     } catch (e) {
       return { analysis: null, error: (e as Error).message };
     }
-  }, [text, ecLevel]);
+  }, [bytes, ecLevel, mask]);
+
+  const handleText = (value: string) => {
+    setText(value);
+    setBytes(new TextEncoder().encode(value));
+    setMask(undefined); // re-optimise the mask for the new content
+  };
+
+  // Flip a single message bit: edit the byte, recompute (EC updates), and keep
+  // the current mask so the change stays local.
+  const toggleBit = (m: QRModule) => {
+    if (m.role !== "message" || m.byteIndex == null || m.bitOfByte == null) return;
+    const next = Uint8Array.from(bytes);
+    next[m.byteIndex] ^= 1 << m.bitOfByte;
+    if (analysis) setMask(analysis.maskPattern);
+    setBytes(next);
+    setText(new TextDecoder().decode(next));
+  };
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-10 sm:px-6 lg:px-8">
@@ -43,7 +75,9 @@ export default function Analyzer() {
           Type any text and watch it get encoded into a real, scannable QR
           symbol. Every module is coloured by its job — the message data, the
           error-correction codewords, the finder, timing and alignment patterns,
-          and the format information. Hover the grid or the legend to explore.
+          and the format information. Hover the grid or the legend to explore,
+          and click a green message module to flip its bit and watch the
+          error-correction codewords recompute.
         </p>
       </header>
 
@@ -56,7 +90,7 @@ export default function Analyzer() {
           <input
             type="text"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => handleText(e.target.value)}
             placeholder="Enter a URL or any text…"
             className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition-colors focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-zinc-700"
           />
@@ -68,7 +102,10 @@ export default function Analyzer() {
           </span>
           <select
             value={ecLevel}
-            onChange={(e) => setEcLevel(e.target.value as ECLevel)}
+            onChange={(e) => {
+              setEcLevel(e.target.value as ECLevel);
+              setMask(undefined);
+            }}
             className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-zinc-700"
           >
             {EC_LEVELS.map((l) => (
@@ -118,6 +155,7 @@ export default function Analyzer() {
                 showDirection={showDirection}
                 highlight={highlight}
                 onHover={setHovered}
+                onToggle={toggleBit}
               />
             </div>
             <HoverReadout module={hovered} analysis={analysis} />
@@ -162,6 +200,7 @@ function HoverReadout({
   if (module.role === "message" && module.byteIndex != null) {
     const ch = analysis.characters[module.byteIndex];
     if (ch) details.push(`“${ch.char}” (0x${ch.code.toString(16).padStart(2, "0")})`);
+    details.push("click to flip");
   }
 
   return (

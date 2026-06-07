@@ -33,9 +33,15 @@ type CWMeta =
   | { kind: "data"; block: number; indexInBlock: number; originalIndex: number }
   | { kind: "ec"; block: number; indexInBlock: number };
 
-export function analyze(text: string, opts: AnalyzeOptions = {}): QRAnalysis {
+export function analyze(
+  input: string | Uint8Array,
+  opts: AnalyzeOptions = {},
+): QRAnalysis {
   const level: ECLevel = opts.errorCorrectionLevel ?? "M";
-  const bytes = new TextEncoder().encode(text);
+  const bytes =
+    typeof input === "string" ? new TextEncoder().encode(input) : input;
+  const text =
+    typeof input === "string" ? input : new TextDecoder().decode(input);
 
   // --- Choose the version (symbol size) ---
   let version = opts.version ?? 0;
@@ -60,12 +66,14 @@ export function analyze(text: string, opts: AnalyzeOptions = {}): QRAnalysis {
   const bits: number[] = [];
   const bitRole: ModuleRole[] = [];
   const bitByte: number[] = []; // input byte index per bit (-1 if not message)
+  const bitPos: number[] = []; // bit position within the value (0 = LSB … 7)
 
   const push = (value: number, len: number, role: ModuleRole, byteIdx = -1) => {
     for (let b = len - 1; b >= 0; b--) {
       bits.push((value >>> b) & 1);
       bitRole.push(role);
       bitByte.push(byteIdx);
+      bitPos.push(b);
     }
   };
 
@@ -82,6 +90,7 @@ export function analyze(text: string, opts: AnalyzeOptions = {}): QRAnalysis {
     bits.push(0);
     bitRole.push("terminator");
     bitByte.push(-1);
+    bitPos.push(0);
   }
   // Pad codewords (0xEC / 0x11 alternating) fill the remaining capacity.
   const remainingBytes = (dataBits - bits.length) / 8;
@@ -255,7 +264,10 @@ export function analyze(text: string, opts: AnalyzeOptions = {}): QRAnalysis {
           } else {
             const origBit = meta.originalIndex * 8 + (7 - bitIndex);
             m.role = bitRole[origBit];
-            if (m.role === "message") m.byteIndex = bitByte[origBit];
+            if (m.role === "message") {
+              m.byteIndex = bitByte[origBit];
+              m.bitOfByte = bitPos[origBit];
+            }
           }
         } else {
           m.role = "remainder";

@@ -2,7 +2,7 @@
 
 import { CategoryId, moduleColor, ROLE_CATEGORY } from "@/lib/qr/roles";
 import type { QRAnalysis, QRModule } from "@/lib/qr/types";
-import { useCallback, useId, useMemo, useRef } from "react";
+import { useCallback, useId, useMemo, useRef, useState } from "react";
 
 const QUIET = 4; // quiet-zone width in modules
 const OUTLINE_STROKE = 0.1; // stroke width of the byte / mode / length outlines
@@ -16,6 +16,8 @@ interface Props {
   /** When set, only modules of this category are shown at full strength. */
   highlight: CategoryId | null;
   onHover: (module: QRModule | null) => void;
+  /** Called when a message module is clicked, to flip its bit. */
+  onToggle: (module: QRModule) => void;
 }
 
 /**
@@ -118,6 +120,7 @@ export default function QRGrid({
   showDirection,
   highlight,
   onHover,
+  onToggle,
 }: Props) {
   const { size, modules, characters } = analysis;
   const dim = size + QUIET * 2;
@@ -193,20 +196,36 @@ export default function QRGrid({
     return { segs, first: pts[0] ?? null };
   }, [modules]);
 
-  const handleMove = useCallback(
-    (e: React.MouseEvent<SVGSVGElement>) => {
+  const [clickable, setClickable] = useState(false);
+
+  const moduleAt = useCallback(
+    (e: React.MouseEvent<SVGSVGElement>): QRModule | null => {
       const svg = svgRef.current;
-      if (!svg) return;
+      if (!svg) return null;
       const rect = svg.getBoundingClientRect();
       const col = Math.floor(((e.clientX - rect.left) / rect.width) * dim - QUIET);
       const row = Math.floor(((e.clientY - rect.top) / rect.height) * dim - QUIET);
-      if (row < 0 || col < 0 || row >= size || col >= size) {
-        onHover(null);
-        return;
-      }
-      onHover(modules[row][col]);
+      if (row < 0 || col < 0 || row >= size || col >= size) return null;
+      return modules[row][col];
     },
-    [dim, size, modules, onHover],
+    [dim, size, modules],
+  );
+
+  const handleMove = useCallback(
+    (e: React.MouseEvent<SVGSVGElement>) => {
+      const m = moduleAt(e);
+      onHover(m);
+      setClickable(m?.role === "message");
+    },
+    [moduleAt, onHover],
+  );
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent<SVGSVGElement>) => {
+      const m = moduleAt(e);
+      if (m && m.role === "message") onToggle(m);
+    },
+    [moduleAt, onToggle],
   );
 
   return (
@@ -214,9 +233,14 @@ export default function QRGrid({
       ref={svgRef}
       viewBox={`0 0 ${dim} ${dim}`}
       className="h-auto w-full select-none"
+      style={{ cursor: clickable ? "pointer" : "default" }}
       shapeRendering="crispEdges"
       onMouseMove={handleMove}
-      onMouseLeave={() => onHover(null)}
+      onMouseLeave={() => {
+        onHover(null);
+        setClickable(false);
+      }}
+      onClick={handleClick}
     >
       {/* Quiet zone / background */}
       <rect x={0} y={0} width={dim} height={dim} fill="#ffffff" />
