@@ -1,8 +1,8 @@
 "use client";
 
 import { analyze } from "@/lib/qr/analyze";
-import { ROLE_STYLES } from "@/lib/qr/roles";
-import type { ECLevel, ModuleRole, QRAnalysis, QRModule } from "@/lib/qr/types";
+import { CategoryId, moduleColor, ROLE_INFO } from "@/lib/qr/roles";
+import type { ECLevel, QRAnalysis, QRModule } from "@/lib/qr/types";
 import { useMemo, useState } from "react";
 import Legend from "./Legend";
 import QRGrid from "./QRGrid";
@@ -18,7 +18,7 @@ export default function Analyzer() {
   const [text, setText] = useState("https://www.anthropic.com/claude-code");
   const [ecLevel, setEcLevel] = useState<ECLevel>("M");
   const [showChars, setShowChars] = useState(true);
-  const [highlightRole, setHighlightRole] = useState<ModuleRole | null>(null);
+  const [highlight, setHighlight] = useState<CategoryId | null>(null);
   const [hovered, setHovered] = useState<QRModule | null>(null);
 
   const { analysis, error } = useMemo(() => {
@@ -40,9 +40,9 @@ export default function Analyzer() {
         </h1>
         <p className="max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
           Type any text and watch it get encoded into a real, scannable QR
-          symbol. Every module is coloured by its job — the message bytes, the
-          error-correction codewords, the finder and timing patterns, and more.
-          Hover the grid or the legend to explore.
+          symbol. Every module is coloured by its job — the message data, the
+          error-correction codewords, the finder, timing and alignment patterns,
+          and the format information. Hover the grid or the legend to explore.
         </p>
       </header>
 
@@ -103,7 +103,7 @@ export default function Analyzer() {
               <QRGrid
                 analysis={analysis}
                 showChars={showChars}
-                highlightRole={highlightRole}
+                highlight={highlight}
                 onHover={setHovered}
               />
             </div>
@@ -113,11 +113,8 @@ export default function Analyzer() {
           {/* Stats + legend */}
           <aside className="flex flex-col gap-6">
             <Stats analysis={analysis} />
-            <Legend
-              analysis={analysis}
-              highlightRole={highlightRole}
-              onHighlight={setHighlightRole}
-            />
+            <Legend analysis={analysis} highlight={highlight} onHighlight={setHighlight} />
+            <FormatInfo analysis={analysis} />
           </aside>
         </div>
       )}
@@ -139,7 +136,7 @@ function HoverReadout({
       </p>
     );
   }
-  const style = ROLE_STYLES[module.role];
+  const info = ROLE_INFO[module.role];
   const details: string[] = [`row ${module.row}, col ${module.col}`];
   details.push(module.dark ? "dark (1)" : "light (0)");
   if (module.codewordIndex != null) {
@@ -151,18 +148,18 @@ function HoverReadout({
   }
   if (module.role === "message" && module.byteIndex != null) {
     const ch = analysis.characters[module.byteIndex];
-    if (ch) details.push(`character “${ch.char}” (0x${ch.code.toString(16).padStart(2, "0")})`);
+    if (ch) details.push(`“${ch.char}” (0x${ch.code.toString(16).padStart(2, "0")})`);
   }
 
   return (
     <div className="flex items-start gap-2.5 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm dark:border-zinc-800 dark:bg-zinc-950">
       <span
         className="mt-0.5 size-3.5 shrink-0 rounded-sm ring-1 ring-black/10"
-        style={{ backgroundColor: style.dark }}
+        style={{ backgroundColor: moduleColor(module.role, true) }}
       />
       <span className="min-w-0">
         <span className="font-medium text-zinc-900 dark:text-zinc-100">
-          {style.label}
+          {info.label}
         </span>
         <span className="text-zinc-500 dark:text-zinc-400"> — {details.join(" · ")}</span>
       </span>
@@ -181,9 +178,7 @@ function Stats({ analysis }: { analysis: QRAnalysis }) {
     ["EC codewords", `${analysis.ecCodewords}`],
     [
       "Blocks",
-      analysis.blocks === 1
-        ? "1"
-        : `${analysis.blocks} × ${analysis.ecPerBlock} EC`,
+      analysis.blocks === 1 ? "1" : `${analysis.blocks} × ${analysis.ecPerBlock} EC`,
     ],
   ];
   return (
@@ -197,5 +192,55 @@ function Stats({ analysis }: { analysis: QRAnalysis }) {
         </div>
       ))}
     </dl>
+  );
+}
+
+function Bits({ bits }: { bits: string }) {
+  return (
+    <span className="flex gap-0.5">
+      {bits.split("").map((b, i) => (
+        <span
+          key={i}
+          className={`flex size-5 items-center justify-center rounded-[3px] font-mono text-xs ${
+            b === "1"
+              ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+              : "bg-zinc-100 text-zinc-500 ring-1 ring-inset ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-zinc-700"
+          }`}
+        >
+          {b}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function FormatInfo({ analysis }: { analysis: QRAnalysis }) {
+  const { ecLevelBits, maskBits, ecBits } = analysis.formatGroups;
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        Format information
+      </h3>
+      <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col gap-1">
+          <Bits bits={ecLevelBits} />
+          <span className="text-xs text-zinc-500">
+            Error-correction level ({analysis.errorCorrectionLevel})
+          </span>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Bits bits={maskBits} />
+          <span className="text-xs text-zinc-500">
+            Mask pattern ({analysis.maskPattern})
+          </span>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Bits bits={ecBits} />
+          <span className="text-xs text-zinc-500">
+            Error-correction format (BCH)
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }

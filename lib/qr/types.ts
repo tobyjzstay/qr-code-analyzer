@@ -76,6 +76,8 @@ export interface QRAnalysis {
   modeBits: string;
   /** Character-count indicator bits as a string. */
   countBits: string;
+  /** The format information decoded into its three parts. */
+  formatGroups: { ecLevelBits: string; maskBits: string; ecBits: string };
   characters: MessageChar[];
 }
 

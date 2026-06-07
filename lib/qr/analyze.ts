@@ -15,6 +15,7 @@ import {
   ecBlocks,
   ecTotalCodewords,
   formatBits,
+  formatInfoGroups,
   maskAt,
   symbolSize,
   versionBits,
@@ -395,6 +396,7 @@ export function analyze(text: string, opts: AnalyzeOptions = {}): QRAnalysis {
     ecPerBlock,
     modeBits,
     countBits,
+    formatGroups: formatInfoGroups(level, mask),
     characters,
   };
 }

@@ -1,7 +1,7 @@
 "use client";
 
-import { ROLE_STYLES } from "@/lib/qr/roles";
-import type { ModuleRole, QRAnalysis, QRModule } from "@/lib/qr/types";
+import { CategoryId, moduleColor, ROLE_CATEGORY } from "@/lib/qr/roles";
+import type { QRAnalysis, QRModule } from "@/lib/qr/types";
 import { useCallback, useRef } from "react";
 
 const QUIET = 4; // quiet-zone width in modules
@@ -9,17 +9,12 @@ const QUIET = 4; // quiet-zone width in modules
 interface Props {
   analysis: QRAnalysis;
   showChars: boolean;
-  /** When set, only modules of this role are shown at full strength. */
-  highlightRole: ModuleRole | null;
+  /** When set, only modules of this category are shown at full strength. */
+  highlight: CategoryId | null;
   onHover: (module: QRModule | null) => void;
 }
 
-export default function QRGrid({
-  analysis,
-  showChars,
-  highlightRole,
-  onHover,
-}: Props) {
+export default function QRGrid({ analysis, showChars, highlight, onHover }: Props) {
   const { size, modules, characters } = analysis;
   const dim = size + QUIET * 2;
   const svgRef = useRef<SVGSVGElement>(null);
@@ -53,9 +48,7 @@ export default function QRGrid({
       <rect x={0} y={0} width={dim} height={dim} fill="#ffffff" />
 
       {modules.flat().map((m) => {
-        const style = ROLE_STYLES[m.role];
-        const fill = m.dark ? style.dark : style.light;
-        const muted = highlightRole != null && m.role !== highlightRole;
+        const muted = highlight != null && ROLE_CATEGORY[m.role] !== highlight;
         return (
           <rect
             key={`${m.row}-${m.col}`}
@@ -63,7 +56,7 @@ export default function QRGrid({
             y={m.row + QUIET}
             width={1.02}
             height={1.02}
-            fill={fill}
+            fill={moduleColor(m.role, m.dark)}
             opacity={muted ? 0.08 : 1}
           />
         );
@@ -80,7 +73,7 @@ export default function QRGrid({
           }
           const cx = sc / ch.cells.length + QUIET + 0.5;
           const cy = sr / ch.cells.length + QUIET + 0.5;
-          const muted = highlightRole != null && highlightRole !== "message";
+          const muted = highlight != null && highlight !== "data";
           return (
             <text
               key={`ch-${ch.index}`}

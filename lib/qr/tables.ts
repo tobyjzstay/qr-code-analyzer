@@ -134,6 +134,24 @@ export function formatBits(level: ECLevel, mask: number): number {
   return ((data << 10) | d) ^ G15_MASK;
 }
 
+/**
+ * The format information decoded into its three parts, as bit strings:
+ * the 2-bit error-correction level, the 3-bit mask pattern, and the 10
+ * BCH error-correction bits that protect them.
+ */
+export function formatInfoGroups(level: ECLevel, mask: number) {
+  const ecLevel = EC_FORMAT_BIT[level];
+  let d = ((ecLevel << 3) | mask) << 10;
+  while (bchDigit(d) - G15_BCH >= 0) {
+    d ^= G15 << (bchDigit(d) - G15_BCH);
+  }
+  return {
+    ecLevelBits: ecLevel.toString(2).padStart(2, "0"),
+    maskBits: mask.toString(2).padStart(3, "0"),
+    ecBits: (d & 0x3ff).toString(2).padStart(10, "0"),
+  };
+}
+
 const G18 =
   (1 << 12) |
   (1 << 11) |

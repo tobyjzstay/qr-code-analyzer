@@ -1,142 +1,155 @@
 import type { ModuleRole } from "./types";
 
-export interface RoleStyle {
+// The analyzer groups the fine-grained module roles into the six visible
+// categories from Dan Hollick's QR explainer, using his exact colours: finder
+// patterns are red, the alignment pattern pink, the timing pattern blue, the
+// format information yellow, the message data green, and the error-correction
+// codewords purple.
+export type CategoryId =
+  | "finder"
+  | "alignment"
+  | "timing"
+  | "format"
+  | "data"
+  | "ec";
+
+export interface Category {
+  id: CategoryId;
+  label: string;
+  description: string;
   /** Colour for dark (set) modules. */
   dark: string;
-  /** Colour for light (unset) modules — a pale tint so the zone is visible. */
+  /** Pale tint for light (unset) modules, so the zone stays visible. */
   light: string;
-  /** Short label for the legend. */
-  label: string;
-  /** One-line explanation of what this part of the symbol does. */
-  description: string;
-  /** Grouping for the legend. */
-  group: "function" | "encoding";
 }
 
-// Colours follow Dan Hollick's QR explainer where it shows them: the message
-// bytes are mint green and the mode/length header is blue. Error correction
-// takes the violet from his "data region" view; the remaining function
-// patterns each get a distinct hue so every part of the symbol is legible.
-export const ROLE_STYLES: Record<ModuleRole, RoleStyle> = {
-  finder: {
-    dark: "#0f172a",
-    light: "#e2e8f0",
-    label: "Finder pattern",
-    description:
-      "Three corner squares a scanner uses to locate and orient the code.",
-    group: "function",
+export const CATEGORIES: Category[] = [
+  {
+    id: "finder",
+    label: "Finder patterns",
+    description: "The three corner squares that let a reader locate the code.",
+    dark: "#ef4444",
+    light: "#fde4e4",
   },
-  separator: {
-    dark: "#94a3b8",
-    light: "#f1f5f9",
-    label: "Separator",
-    description: "One-module light border isolating each finder pattern.",
-    group: "function",
-  },
-  timing: {
-    dark: "#b45309",
-    light: "#fde68a",
-    label: "Timing pattern",
-    description:
-      "Alternating row and column that lets a scanner count the module grid.",
-    group: "function",
-  },
-  alignment: {
-    dark: "#c2410c",
-    light: "#fed7aa",
+  {
+    id: "alignment",
     label: "Alignment pattern",
     description:
-      "Smaller squares (version 2+) that correct for perspective distortion.",
-    group: "function",
+      "Lets the reader determine orientation and correct for distortion.",
+    dark: "#ec4899",
+    light: "#fbdcef",
   },
-  format: {
-    dark: "#be185d",
-    light: "#fbcfe8",
-    label: "Format information",
-    description:
-      "Error-correction level and mask pattern, protected by a BCH code.",
-    group: "function",
+  {
+    id: "timing",
+    label: "Timing pattern",
+    description: "Determines the width and number of cells in the code.",
+    dark: "#3b82f6",
+    light: "#d7e6fd",
   },
-  version: {
-    dark: "#0f766e",
-    light: "#99f6e4",
-    label: "Version information",
-    description: "The symbol version, present only on version 7 and larger.",
-    group: "function",
+  {
+    id: "format",
+    label: "Format info",
+    description: "Stores the error-correction level and the mask pattern.",
+    dark: "#f5c518",
+    light: "#fbeeb4",
   },
-  darkModule: {
-    dark: "#111827",
-    light: "#111827",
-    label: "Dark module",
-    description: "A single module that is always dark, next to a finder.",
-    group: "function",
+  {
+    id: "data",
+    label: "Data",
+    description: "The encoded message — mode, length, your bytes and padding.",
+    dark: "#10b981",
+    light: "#d4f4e7",
   },
-  mode: {
-    dark: "#4338ca",
-    light: "#c7d2fe",
-    label: "Mode indicator",
-    description: "Four bits saying how the data is encoded (here: byte mode).",
-    group: "encoding",
-  },
-  count: {
-    dark: "#1d4ed8",
-    light: "#bfdbfe",
-    label: "Character count",
-    description: "How many characters of data follow the mode indicator.",
-    group: "encoding",
-  },
-  message: {
-    dark: "#047857",
-    light: "#a7f3d0",
-    label: "Message data",
-    description: "The actual bytes of your input, one character per 8 bits.",
-    group: "encoding",
-  },
-  terminator: {
-    dark: "#475569",
-    light: "#e2e8f0",
-    label: "Terminator / pad bits",
-    description: "End marker plus zero bits filling out to a byte boundary.",
-    group: "encoding",
-  },
-  padding: {
-    dark: "#737373",
-    light: "#e7e5e4",
-    label: "Pad codewords",
-    description: "Filler bytes (0xEC / 0x11) that use up any spare capacity.",
-    group: "encoding",
-  },
-  ec: {
-    dark: "#7c3aed",
-    light: "#ddd6fe",
+  {
+    id: "ec",
     label: "Error correction",
-    description:
-      "Reed-Solomon codewords that let the code be read even if damaged.",
-    group: "encoding",
+    description: "Reed-Solomon codewords that recover the code if it's damaged.",
+    dark: "#a855f7",
+    light: "#e9d6fc",
   },
-  remainder: {
-    dark: "#cbd5e1",
-    light: "#f8fafc",
-    label: "Remainder bits",
-    description: "Leftover bits that don't make up a full codeword.",
-    group: "encoding",
-  },
+];
+
+const BY_ID = new Map(CATEGORIES.map((c) => [c.id, c]));
+
+export function category(id: CategoryId): Category {
+  return BY_ID.get(id)!;
+}
+
+/** Which legend category each module role belongs to. */
+export const ROLE_CATEGORY: Record<ModuleRole, CategoryId> = {
+  finder: "finder",
+  separator: "finder",
+  timing: "timing",
+  alignment: "alignment",
+  format: "format",
+  version: "format",
+  darkModule: "format",
+  mode: "data",
+  count: "data",
+  message: "data",
+  terminator: "data",
+  padding: "data",
+  ec: "ec",
+  remainder: "data",
 };
 
-/** Roles in the order they should appear in the legend. */
-export const ROLE_ORDER: ModuleRole[] = [
-  "finder",
-  "separator",
-  "timing",
-  "alignment",
-  "format",
-  "version",
-  "darkModule",
-  "mode",
-  "count",
-  "message",
-  "terminator",
-  "padding",
-  "ec",
-  "remainder",
-];
+/** Fill colour for a module, based on its category and dark/light state. */
+export function moduleColor(role: ModuleRole, dark: boolean): string {
+  const c = category(ROLE_CATEGORY[role]);
+  return dark ? c.dark : c.light;
+}
+
+/** Fine-grained label + description shown when inspecting a single module. */
+export const ROLE_INFO: Record<ModuleRole, { label: string; description: string }> =
+  {
+    finder: { label: "Finder pattern", description: "Locates the code." },
+    separator: {
+      label: "Separator",
+      description: "Light border isolating a finder pattern.",
+    },
+    timing: {
+      label: "Timing pattern",
+      description: "Calibrates the module grid.",
+    },
+    alignment: {
+      label: "Alignment pattern",
+      description: "Corrects for perspective distortion.",
+    },
+    format: {
+      label: "Format information",
+      description: "Error-correction level + mask pattern.",
+    },
+    version: {
+      label: "Version information",
+      description: "The symbol version (v7+).",
+    },
+    darkModule: {
+      label: "Dark module",
+      description: "A module that is always dark.",
+    },
+    mode: {
+      label: "Mode indicator",
+      description: "Says the data is encoded in byte mode.",
+    },
+    count: {
+      label: "Character count",
+      description: "How many bytes of data follow.",
+    },
+    message: { label: "Message data", description: "A byte of your input." },
+    terminator: {
+      label: "Terminator / pad bits",
+      description: "End marker and zero padding.",
+    },
+    padding: {
+      label: "Pad codeword",
+      description: "Filler byte (0xEC / 0x11) using spare capacity.",
+    },
+    ec: {
+      label: "Error-correction codeword",
+      description: "Reed-Solomon recovery data.",
+    },
+    remainder: {
+      label: "Remainder bit",
+      description: "Leftover bit, not part of a codeword.",
+    },
+  };
