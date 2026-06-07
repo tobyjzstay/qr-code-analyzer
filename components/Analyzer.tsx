@@ -25,9 +25,8 @@ export default function Analyzer() {
     new TextEncoder().encode(DEFAULT_TEXT),
   );
   const [ecLevel, setEcLevel] = useState<ECLevel>("M");
-  // undefined = auto-pick the best mask; a number = keep that mask fixed (so
-  // editing a data bit only changes that bit + the error correction, not the
-  // whole masked appearance).
+  // undefined = auto-pick the lowest-penalty mask; a number (0-7) forces that
+  // mask, controlled by the Mask dropdown.
   const [mask, setMask] = useState<number | undefined>(undefined);
   // Which overlay to show on top of the symbol (mutually exclusive).
   const [overlay, setOverlay] = useState<"chars" | "direction" | "none">("chars");
@@ -51,16 +50,15 @@ export default function Analyzer() {
   const handleText = (value: string) => {
     setText(value);
     setBytes(new TextEncoder().encode(value));
-    setMask(undefined); // re-optimise the mask for the new content
   };
 
-  // Flip a single message bit: edit the byte, recompute (EC updates), and keep
-  // the current mask so the change stays local.
+  // Flip a single message bit: edit the byte and recompute (the EC codewords
+  // update). With a fixed mask the change stays local; on Auto the mask
+  // re-optimises (usually unchanged for a single-bit edit).
   const toggleBit = (m: QRModule) => {
     if (m.role !== "message" || m.byteIndex == null || m.bitOfByte == null) return;
     const next = Uint8Array.from(bytes);
     next[m.byteIndex] ^= 1 << m.bitOfByte;
-    if (analysis) setMask(analysis.maskPattern);
     setBytes(next);
     setText(new TextDecoder().decode(next));
   };
@@ -102,15 +100,32 @@ export default function Analyzer() {
           </span>
           <select
             value={ecLevel}
-            onChange={(e) => {
-              setEcLevel(e.target.value as ECLevel);
-              setMask(undefined);
-            }}
+            onChange={(e) => setEcLevel(e.target.value as ECLevel)}
             className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-zinc-700"
           >
             {EC_LEVELS.map((l) => (
               <option key={l.value} value={l.value}>
                 {l.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+            Mask
+          </span>
+          <select
+            value={mask ?? "auto"}
+            onChange={(e) =>
+              setMask(e.target.value === "auto" ? undefined : Number(e.target.value))
+            }
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-zinc-700"
+          >
+            <option value="auto">Auto{analysis ? ` (${analysis.maskPattern})` : ""}</option>
+            {[0, 1, 2, 3, 4, 5, 6, 7].map((m) => (
+              <option key={m} value={m}>
+                {m}
               </option>
             ))}
           </select>
