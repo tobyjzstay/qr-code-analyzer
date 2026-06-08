@@ -110,6 +110,38 @@ function centroid(cells: [number, number][]): [number, number] {
   return [sc / cells.length, sr / cells.length];
 }
 
+/**
+ * Centre point for a glyph inside a footprint. Only cells that belong to a
+ * fully-present 2×2 block are considered, so thin 1-wide spurs (which a glyph
+ * would overflow) don't drag the centre out of the body of the shape. Falls
+ * back to the full centroid when the footprint is everywhere thinner than 2×2.
+ */
+function coreCentroid(cells: [number, number][]): [number, number] {
+  if (cells.length === 0) return [0, 0];
+  const key = (r: number, c: number) => r * 1000 + c;
+  const set = new Set(cells.map(([r, c]) => key(r, c)));
+  const has = (r: number, c: number) => set.has(key(r, c));
+  const core = new Set<number>();
+  for (const [r, c] of cells) {
+    // Every 2×2 block that could contain this cell (it as TL/TR/BL/BR).
+    for (const [tr, tc] of [
+      [r, c],
+      [r - 1, c],
+      [r, c - 1],
+      [r - 1, c - 1],
+    ]) {
+      if (has(tr, tc) && has(tr + 1, tc) && has(tr, tc + 1) && has(tr + 1, tc + 1)) {
+        core.add(key(tr, tc));
+        core.add(key(tr + 1, tc));
+        core.add(key(tr, tc + 1));
+        core.add(key(tr + 1, tc + 1));
+      }
+    }
+  }
+  if (core.size === 0) return centroid(cells);
+  return centroid([...core].map((k) => [Math.floor(k / 1000), k % 1000]));
+}
+
 /** Unicode arrow glyph for a cardinal direction (y grows downward). */
 function arrowGlyph(dx: number, dy: number): string {
   if (Math.abs(dy) >= Math.abs(dx)) return dy < 0 ? "▲" : "▼";
@@ -193,7 +225,7 @@ export default function QRGrid({
     const letters = characters
       .filter((ch) => ch.cells.length > 0)
       .map((ch) => {
-        const [cx, cy] = centroid(ch.cells);
+        const [cx, cy] = coreCentroid(ch.cells);
         return { char: ch.char, cx, cy };
       });
 
@@ -205,17 +237,14 @@ export default function QRGrid({
   const arrows = useMemo(() => {
     const acc = new Map<
       number,
-      { sr: number; sc: number; n: number; ec: boolean; msg: boolean; hdr: boolean }
+      { cells: [number, number][]; ec: boolean; msg: boolean; hdr: boolean }
     >();
     for (const row of modules) {
       for (const m of row) {
         if (m.codewordIndex == null) continue;
         const a =
-          acc.get(m.codewordIndex) ??
-          { sr: 0, sc: 0, n: 0, ec: false, msg: false, hdr: false };
-        a.sr += m.row + 0.5;
-        a.sc += m.col + 0.5;
-        a.n += 1;
+          acc.get(m.codewordIndex) ?? { cells: [], ec: false, msg: false, hdr: false };
+        a.cells.push([m.row, m.col]);
         if (m.role === "ec") a.ec = true;
         else if (m.role === "message") a.msg = true;
         else if (m.role === "mode" || m.role === "count") a.hdr = true;
@@ -224,11 +253,14 @@ export default function QRGrid({
     }
     const pts = [...acc.entries()]
       .sort((a, b) => a[0] - b[0])
-      .map(([, a]) => ({
-        x: a.sc / a.n,
-        y: a.sr / a.n,
-        color: (a.ec ? "ec" : a.msg ? "data" : a.hdr ? "header" : "data") as SegmentId,
-      }));
+      .map(([, a]) => {
+        const [x, y] = coreCentroid(a.cells);
+        return {
+          x,
+          y,
+          color: (a.ec ? "ec" : a.msg ? "data" : a.hdr ? "header" : "data") as SegmentId,
+        };
+      });
 
     return pts.map((p, i) => {
       const next = pts[i + 1] ?? p;
