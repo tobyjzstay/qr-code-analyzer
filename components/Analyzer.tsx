@@ -17,6 +17,7 @@ const EC_LEVELS: { value: ECLevel; label: string }[] = [
 const OVERLAYS: { value: Overlay; label: string }[] = [
   { value: "chars", label: "Characters" },
   { value: "direction", label: "Reading order" },
+  { value: "bits", label: "Bit numbers" },
   { value: "none", label: "None" },
 ];
 
@@ -27,7 +28,9 @@ export default function Analyzer() {
   // the input box. Flipping a bit edits `bytes` directly (the result may not be
   // valid text), so the two can diverge.
   const [text, setText] = useState(DEFAULT_TEXT);
-  const [version, setVersion] = useState(1);
+  // undefined = auto-pick the smallest version that fits; a number (1-40)
+  // forces that version.
+  const [version, setVersion] = useState<number | undefined>(undefined);
   const [bytes, setBytes] = useState<Uint8Array>(() =>
     new TextEncoder().encode(DEFAULT_TEXT),
   );
@@ -105,16 +108,20 @@ export default function Analyzer() {
           <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">
             Version
           </span>
-          <input
-            type="number"
-            min="1"
-            max="40"
-            step="1"
-            value={version}
-            onChange={(e) => setVersion(Number(e.target.value))}
-            placeholder="1"
-            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition-colors focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-zinc-700"
-          />
+          <select
+            value={version ?? "auto"}
+            onChange={(e) =>
+              setVersion(e.target.value === "auto" ? undefined : Number(e.target.value))
+            }
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-zinc-700"
+          >
+            <option value="auto">Auto{analysis ? ` (${analysis.version})` : ""}</option>
+            {Array.from({ length: 40 }, (_, i) => i + 1).map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
         </label>
 
         <label className="flex flex-col gap-1.5">
@@ -189,6 +196,7 @@ export default function Analyzer() {
                 analysis={analysis}
                 showChars={overlay === "chars"}
                 showDirection={overlay === "direction"}
+                showBits={overlay === "bits"}
                 highlight={highlight}
                 onHover={setHovered}
                 onToggle={toggleBit}
@@ -224,8 +232,8 @@ function HoverReadout({
     );
   }
   const info = ROLE_INFO[module.role];
-  const details: string[] = [`row ${module.row}, col ${module.col}`];
-  details.push(module.dark ? "dark (1)" : "light (0)");
+  const details: string[] = [`row ${module.row + 1}, col ${module.col + 1}`];
+  details.push(module.dark ? "(1)" : "(0)");
   if (module.codewordIndex != null) {
     details.push(`codeword #${module.codewordIndex}`);
     if (analysis.blocks > 1 && module.blockIndex != null) {

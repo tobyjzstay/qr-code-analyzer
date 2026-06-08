@@ -3,7 +3,7 @@
 /** Error correction level. L = 7%, M = 15%, Q = 25%, H = 30% recovery. */
 export type ECLevel = "L" | "M" | "Q" | "H";
 
-export type Overlay = "chars" | "direction" | "none";
+export type Overlay = "chars" | "direction" | "bits" | "none";
 
 /**
  * The semantic role of a single module (cell) in the QR matrix. Every module

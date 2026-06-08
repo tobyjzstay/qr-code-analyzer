@@ -1,20 +1,18 @@
 "use client";
 
-import { CategoryId, moduleColor, ROLE_CATEGORY } from "@/lib/qr/roles";
+import { category, CategoryId, moduleColor, ROLE_CATEGORY } from "@/lib/qr/roles";
 import type { QRAnalysis, QRModule } from "@/lib/qr/types";
 import { useCallback, useId, useMemo, useRef, useState } from "react";
 
 const QUIET = 4; // quiet-zone width in modules
-const OUTLINE_STROKE = 0.1; // stroke width of the byte / mode / length outlines
+const OUTLINE_STROKE = 0.1; // stroke width of the overlay outlines
 
-// Segment groups and their colours. "data" = message + padding (green),
-// "header" = mode + length indicator (blue), "ec" = error correction (purple).
-type SegmentId = "data" | "header" | "ec";
-const OUTLINE_COLOR: Record<SegmentId, string> = {
-  data: "#0fb880",
-  header: "#3b82f6",
-  ec: "#7c3aed",
-};
+// The two segments that carry an overlay: the message/header/padding "data"
+// (green) and "ec" error correction (purple). Their colours come straight from
+// the module categories so the overlay always matches the module fill.
+type OverlayCat = "data" | "ec";
+const OVERLAY_CATS: OverlayCat[] = ["data", "ec"];
+const overlayColor = (cat: OverlayCat) => category(cat).dark;
 
 interface Props {
   analysis: QRAnalysis;
@@ -22,6 +20,10 @@ interface Props {
   showChars: boolean;
   /** Draw arrows showing the order data is placed in. */
   showDirection: boolean;
+  /** Label each data/EC module with its bit position within its codeword,
+   * numbered in reading order (1 = first bit read / MSB … 8 = last / LSB),
+   * matching the standard QR diagram. */
+  showBits: boolean;
   /** When set, only modules of this category are shown at full strength. */
   highlight: CategoryId | null;
   onHover: (module: QRModule | null) => void;
@@ -142,6 +144,51 @@ function coreCentroid(cells: [number, number][]): [number, number] {
   return centroid([...core].map((k) => [Math.floor(k / 1000), k % 1000]));
 }
 
+/** Whether a cell set contains a full 2×2 block (i.e. a glyph fits inside it). */
+function hasCore(cells: [number, number][]): boolean {
+  const key = (r: number, c: number) => r * 1000 + c;
+  const set = new Set(cells.map(([r, c]) => key(r, c)));
+  return cells.some(
+    ([r, c]) =>
+      set.has(key(r + 1, c)) && set.has(key(r, c + 1)) && set.has(key(r + 1, c + 1)),
+  );
+}
+
+/**
+ * Split a cell set into its 4-connected components. A unit (codeword or byte)
+ * can be split into separate chunks — by interleaving, or by the zig-zag
+ * wrapping a function pattern — so we label each chunk and link them.
+ */
+function connectedComponents(cells: [number, number][]): [number, number][][] {
+  const key = (r: number, c: number) => r * 1000 + c;
+  const set = new Set(cells.map(([r, c]) => key(r, c)));
+  const seen = new Set<number>();
+  const out: [number, number][][] = [];
+  for (const [sr, sc] of cells) {
+    if (seen.has(key(sr, sc))) continue;
+    const comp: [number, number][] = [];
+    const stack: [number, number][] = [[sr, sc]];
+    seen.add(key(sr, sc));
+    while (stack.length) {
+      const [r, c] = stack.pop()!;
+      comp.push([r, c]);
+      for (const [nr, nc] of [
+        [r - 1, c],
+        [r + 1, c],
+        [r, c - 1],
+        [r, c + 1],
+      ]) {
+        if (set.has(key(nr, nc)) && !seen.has(key(nr, nc))) {
+          seen.add(key(nr, nc));
+          stack.push([nr, nc]);
+        }
+      }
+    }
+    out.push(comp);
+  }
+  return out;
+}
+
 /** Unicode arrow glyph for a cardinal direction (y grows downward). */
 function arrowGlyph(dx: number, dy: number): string {
   if (Math.abs(dy) >= Math.abs(dx)) return dy < 0 ? "▲" : "▼";
@@ -152,102 +199,147 @@ export default function QRGrid({
   analysis,
   showChars,
   showDirection,
+  showBits,
   highlight,
   onHover,
   onToggle,
 }: Props) {
-  const { size, modules, characters } = analysis;
+  const { size, modules, characters, byteCount, blocks } = analysis;
   const dim = size + QUIET * 2;
   const svgRef = useRef<SVGSVGElement>(null);
   const uid = useId().replace(/:/g, ""); // unique, selector-safe clip ids
 
-  // Outlines for each segment group, coloured by category. Each group gets one
-  // shared perimeter (clipped to its cells) plus single dividers between its
-  // units (message bytes, or individual codewords), so shared edges aren't
-  // drawn twice. Also the per-character label positions.
+  // Overlay geometry. On single-block symbols the data reads in order, so the
+  // "characters" overlay shows the message letters (plus mode / length / end
+  // markers). On interleaved symbols (multiple EC blocks) the bytes are
+  // scattered, so instead each data codeword is numbered D1, D2… in reading
+  // order — like the EC codewords E1, E2…. A codeword/byte split into separate
+  // chunks gets its label on each chunk, joined by a link line.
   const overlays = useMemo(() => {
     const ck = (r: number, c: number) => r * 1000 + c;
-    const cells: Record<SegmentId, [number, number][]> = { data: [], header: [], ec: [] };
+    const interleaved = blocks > 1;
+    const cells: Record<OverlayCat, [number, number][]> = { data: [], ec: [] };
     const unit = new Map<number, string>(); // cellKey -> unit id (for dividers)
+    const readPos = new Map<number, number>(); // cellKey -> data-flow order
+    const dataCw = new Map<number, [number, number][]>(); // data codeword cells
+    const ecCw = new Map<number, [number, number][]>(); // ec codeword cells
+    const modeCells: [number, number][] = [];
+    const countCells: [number, number][] = [];
+    const termCells: [number, number][] = [];
 
     for (const row of modules) {
       for (const m of row) {
-        let group: SegmentId | null = null;
-        let u = "";
-        switch (m.role) {
-          case "message":
-            group = "data";
-            u = `b${m.byteIndex}`;
-            break;
-          case "padding":
-          case "terminator":
-          case "remainder":
-            group = "data";
-            u = `d${m.codewordIndex ?? `${m.row}_${m.col}`}`;
-            break;
-          case "mode":
-            group = "header";
-            u = "mode";
-            break;
-          case "count":
-            group = "header";
-            u = "count";
-            break;
-          case "ec":
-            group = "ec";
-            u = `e${m.codewordIndex}`;
-            break;
+        const cat = ROLE_CATEGORY[m.role];
+        if (cat !== "data" && cat !== "ec") continue;
+        cells[cat].push([m.row, m.col]);
+        if (m.codewordIndex != null && m.bitIndex != null) {
+          readPos.set(ck(m.row, m.col), m.codewordIndex * 8 + (7 - m.bitIndex));
         }
-        if (!group) continue;
-        cells[group].push([m.row, m.col]);
+
+        // Collect cells per codeword (and per header/end region for labels).
+        if (m.role === "ec") {
+          const arr = ecCw.get(m.codewordIndex!) ?? [];
+          arr.push([m.row, m.col]);
+          ecCw.set(m.codewordIndex!, arr);
+        } else if (m.codewordIndex != null) {
+          const arr = dataCw.get(m.codewordIndex) ?? [];
+          arr.push([m.row, m.col]);
+          dataCw.set(m.codewordIndex, arr);
+        }
+        if (m.role === "mode") modeCells.push([m.row, m.col]);
+        else if (m.role === "count") countCells.push([m.row, m.col]);
+        else if (m.role === "terminator") termCells.push([m.row, m.col]);
+
+        // Divider unit: per codeword when interleaved (matches the D/E labels),
+        // otherwise per byte / header region (matches the character labels).
+        let u: string;
+        if (interleaved) {
+          u = `${cat}${m.codewordIndex ?? `x${m.row}_${m.col}`}`;
+        } else if (m.role === "message") u = `b${m.byteIndex}`;
+        else if (m.role === "mode") u = "mode";
+        else if (m.role === "count") u = "count";
+        else if (m.role === "terminator") u = "term";
+        else if (m.role === "ec") u = `e${m.codewordIndex}`;
+        else u = `d${m.codewordIndex ?? `${m.row}_${m.col}`}`;
         unit.set(ck(m.row, m.col), u);
       }
     }
 
-    const groups = (["data", "header", "ec"] as SegmentId[])
-      .map((id) => {
-        const cs = cells[id];
-        if (cs.length === 0) return null;
-        const inGroup = new Set(cs.map(([r, c]) => ck(r, c)));
-        // Dividers between adjacent cells of different units within this group.
-        let dividers = "";
-        for (const [r, c] of cs) {
-          const u = unit.get(ck(r, c));
-          const rk = ck(r, c + 1);
-          if (inGroup.has(rk) && unit.get(rk) !== u) dividers += `M${c + 1} ${r}L${c + 1} ${r + 1}`;
-          const dk = ck(r + 1, c);
-          if (inGroup.has(dk) && unit.get(dk) !== u) dividers += `M${c} ${r + 1}L${c + 1} ${r + 1}`;
-        }
-        return { id, union: outlinePath(cs), dividers };
-      })
-      .filter((g): g is { id: SegmentId; union: string; dividers: string } => g !== null);
+    const groups = OVERLAY_CATS.map((id) => {
+      const cs = cells[id];
+      if (cs.length === 0) return null;
+      const inGroup = new Set(cs.map(([r, c]) => ck(r, c)));
+      let dividers = "";
+      for (const [r, c] of cs) {
+        const u = unit.get(ck(r, c));
+        const rk = ck(r, c + 1);
+        if (inGroup.has(rk) && unit.get(rk) !== u) dividers += `M${c + 1} ${r}L${c + 1} ${r + 1}`;
+        const dk = ck(r + 1, c);
+        if (inGroup.has(dk) && unit.get(dk) !== u) dividers += `M${c} ${r + 1}L${c + 1} ${r + 1}`;
+      }
+      return { id, union: outlinePath(cs), dividers };
+    }).filter(
+      (g): g is { id: OverlayCat; union: string; dividers: string } => g !== null,
+    );
 
-    const letters = characters
-      .filter((ch) => ch.cells.length > 0)
-      .map((ch) => {
-        const [cx, cy] = coreCentroid(ch.cells);
-        return { char: ch.char, cx, cy };
-      });
+    // A label per chunk of a unit; chunks of the same unit are linked.
+    const labels: { cx: number; cy: number; text: string; cat: OverlayCat }[] = [];
+    const links: { pts: [number, number][]; cat: OverlayCat }[] = [];
+    const addUnit = (cs: [number, number][], text: string, cat: OverlayCat) => {
+      if (cs.length === 0) return;
+      const centers = connectedComponents(cs).map((comp) => coreCentroid(comp));
+      for (const [cx, cy] of centers) labels.push({ cx, cy, text, cat });
+      if (centers.length > 1) links.push({ pts: centers, cat });
+    };
+    // A single label placed in the chunk the unit enters first (data-flow
+    // order), with no link — used for the readable character labels. Chunks
+    // that contain a 2×2 block (so the glyph fits) are preferred over thin
+    // slivers; among those the earliest in data flow wins.
+    const addSingle = (cs: [number, number][], text: string, cat: OverlayCat) => {
+      if (cs.length === 0) return;
+      const comps = connectedComponents(cs);
+      const minPos = (comp: [number, number][]) =>
+        Math.min(...comp.map(([r, c]) => readPos.get(ck(r, c)) ?? Infinity));
+      const fits = comps.filter(hasCore);
+      const pool = fits.length > 0 ? fits : comps;
+      const best = pool.reduce((a, b) => (minPos(b) < minPos(a) ? b : a));
+      const [cx, cy] = coreCentroid(best);
+      labels.push({ cx, cy, text, cat });
+    };
 
-    return { groups, letters };
-  }, [modules, characters]);
+    if (interleaved) {
+      [...dataCw.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .forEach(([, cs], i) => addUnit(cs, `D${i + 1}`, "data"));
+    } else {
+      for (const ch of characters) {
+        addSingle(ch.cells, ch.char === " " ? "␣" : ch.char, "data");
+      }
+      addSingle(modeCells, "Mode", "data");
+      addSingle(countCells, `${byteCount}`, "data");
+      addSingle(termCells, "End", "data");
+    }
+    // EC codewords: linked chunks when interleaved (to show the spread), a
+    // single first-box label when the symbol reads in order.
+    [...ecCw.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .forEach(([, cs], i) =>
+        (interleaved ? addUnit : addSingle)(cs, `E${i + 1}`, "ec"),
+      );
+
+    return { groups, labels, links };
+  }, [modules, characters, byteCount, blocks]);
 
   // Reading order: one arrow glyph per codeword at its centroid, pointing in
   // its cardinal direction of travel and coloured by segment.
   const arrows = useMemo(() => {
-    const acc = new Map<
-      number,
-      { cells: [number, number][]; ec: boolean; msg: boolean; hdr: boolean }
-    >();
+    const acc = new Map<number, { cells: [number, number][]; ec: boolean }>();
     for (const row of modules) {
       for (const m of row) {
         if (m.codewordIndex == null) continue;
-        const a =
-          acc.get(m.codewordIndex) ?? { cells: [], ec: false, msg: false, hdr: false };
+        const a = acc.get(m.codewordIndex) ?? { cells: [], ec: false };
         a.cells.push([m.row, m.col]);
         if (m.role === "ec") a.ec = true;
-        else if (m.role === "message") a.msg = true;
-        else if (m.role === "mode" || m.role === "count") a.hdr = true;
         acc.set(m.codewordIndex, a);
       }
     }
@@ -255,11 +347,7 @@ export default function QRGrid({
       .sort((a, b) => a[0] - b[0])
       .map(([, a]) => {
         const [x, y] = coreCentroid(a.cells);
-        return {
-          x,
-          y,
-          color: (a.ec ? "ec" : a.msg ? "data" : a.hdr ? "header" : "data") as SegmentId,
-        };
+        return { x, y, color: (a.ec ? "ec" : "data") as OverlayCat };
       });
 
     return pts.map((p, i) => {
@@ -271,6 +359,52 @@ export default function QRGrid({
       const dy = i < pts.length - 1 ? next.y - p.y : p.y - prev.y;
       return { x: p.x, y: p.y, glyph: arrowGlyph(dx, dy), color: p.color };
     });
+  }, [modules]);
+
+  // Bit number for each data/EC module, numbered within its *logical field*
+  // (mode = 4 bits, length = 8/16, each character = 8, each codeword = 8…), in
+  // reading order: 1 = first bit read (MSB) … N = last (LSB).
+  const bitNumbers = useMemo(() => {
+    const ck = (r: number, c: number) => r * 1000 + c;
+    const fields = new Map<string, { k: number; rp: number }[]>();
+    for (const row of modules) {
+      for (const m of row) {
+        const cat = ROLE_CATEGORY[m.role];
+        if ((cat !== "data" && cat !== "ec") || m.bitIndex == null || m.codewordIndex == null) {
+          continue;
+        }
+        let unit: string;
+        switch (m.role) {
+          case "mode":
+            unit = "mode";
+            break;
+          case "count":
+            unit = "count";
+            break;
+          case "terminator":
+            unit = "term";
+            break;
+          case "message":
+            unit = `b${m.byteIndex}`;
+            break;
+          case "ec":
+            unit = `e${m.codewordIndex}`;
+            break;
+          default: // padding
+            unit = `p${m.codewordIndex}`;
+        }
+        const rp = m.codewordIndex * 8 + (7 - m.bitIndex); // global reading order
+        const arr = fields.get(unit) ?? [];
+        arr.push({ k: ck(m.row, m.col), rp });
+        fields.set(unit, arr);
+      }
+    }
+    const num = new Map<number, number>();
+    for (const arr of fields.values()) {
+      arr.sort((a, b) => a.rp - b.rp);
+      arr.forEach((cell, i) => num.set(cell.k, i + 1));
+    }
+    return num;
   }, [modules]);
 
   const [clickable, setClickable] = useState(false);
@@ -331,14 +465,14 @@ export default function QRGrid({
             ? m.dark
               ? "#f1f1f1"
               : "#fefefe"
-            : moduleColor(m.role, m.dark);
+            : moduleColor(m.role, m.dark, showChars || showDirection || showBits);
           return (
             <rect
               key={`${m.row}-${m.col}`}
               x={m.col}
               y={m.row}
-              width={1.02}
-              height={1.02}
+              width={1}
+              height={1}
               fill={fill}
             />
           );
@@ -349,7 +483,7 @@ export default function QRGrid({
             shows — a straight line sitting just inside the cells. Shown for
             either toggle; direction adds the rounded flow arrows, characters
             adds the letters. */}
-        {(showChars || showDirection) && (
+        {(showChars || showDirection || showBits) && (
           <g shapeRendering="geometricPrecision">
             <defs>
               {overlays.groups.map((g) => (
@@ -364,7 +498,7 @@ export default function QRGrid({
                 <path
                   d={g.union}
                   fill="none"
-                  stroke={OUTLINE_COLOR[g.id]}
+                  stroke={overlayColor(g.id)}
                   strokeWidth={OUTLINE_STROKE * 2}
                   strokeLinejoin="miter"
                 />
@@ -372,7 +506,7 @@ export default function QRGrid({
                   <path
                     d={g.dividers}
                     fill="none"
-                    stroke={OUTLINE_COLOR[g.id]}
+                    stroke={overlayColor(g.id)}
                     strokeWidth={OUTLINE_STROKE}
                     strokeLinecap="square"
                   />
@@ -386,33 +520,69 @@ export default function QRGrid({
                   key={`arrow${i}`}
                   x={a.x}
                   y={a.y}
-                  fontSize={1}
+                  fontSize={1.4}
                   fontFamily="var(--font-mono, monospace)"
                   fontWeight={700}
                   textAnchor="middle"
                   dominantBaseline="central"
-                  fill={OUTLINE_COLOR[a.color]}
+                  fill={overlayColor(a.color)}
                 >
                   {a.glyph}
                 </text>
               ))}
 
             {showChars &&
-              overlays.letters.map((b, i) => (
+              overlays.links.map((lk, i) => (
+                <polyline
+                  key={`link${i}`}
+                  points={lk.pts.map(([x, y]) => `${x},${y}`).join(" ")}
+                  fill="none"
+                  stroke={overlayColor(lk.cat)}
+                  strokeWidth={0.12}
+                  strokeDasharray="0.35 0.25"
+                  strokeLinecap="round"
+                  opacity={0.55}
+                />
+              ))}
+
+            {showChars &&
+              overlays.labels.map((b, i) => (
                 <text
                   key={i}
                   x={b.cx}
                   y={b.cy}
-                  fontSize={1.5}
+                  fontSize={Math.min(1.5, 2.4 / b.text.length)}
                   fontFamily="var(--font-mono, monospace)"
                   fontWeight={700}
                   textAnchor="middle"
                   dominantBaseline="central"
-                  fill="#0fb880"
+                  fill={overlayColor(b.cat)}
                 >
-                  {b.char === " " ? "␣" : b.char}
+                  {b.text}
                 </text>
               ))}
+
+            {showBits &&
+              modules.flat().map((m) => {
+                const cat = ROLE_CATEGORY[m.role];
+                const n = bitNumbers.get(m.row * 1000 + m.col);
+                if ((cat !== "data" && cat !== "ec") || n == null) return null;
+                return (
+                  <text
+                    key={`bit-${m.row}-${m.col}`}
+                    x={m.col + 0.5}
+                    y={m.row + 0.5}
+                    fontSize={0.7}
+                    fontFamily="var(--font-mono, monospace)"
+                    fontWeight={700}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fill={overlayColor(cat)}
+                  >
+                    {n}
+                  </text>
+                );
+              })}
           </g>
         )}
       </g>

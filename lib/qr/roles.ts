@@ -101,10 +101,22 @@ export const ROLE_CATEGORY: Record<ModuleRole, CategoryId> = {
   remainder: "data",
 };
 
-/** Fill colour for a module, based on its category and dark/light state. */
-export function moduleColor(role: ModuleRole, dark: boolean): string {
+/** Categories that carry an overlay (glyphs/labels) and so get dimmed for it. */
+export function hasOverlay(role: ModuleRole): boolean {
+  const cat = ROLE_CATEGORY[role];
+  return cat === "data" || cat === "ec";
+}
+
+/**
+ * Fill colour for a module, based on its category and dark/light state. When
+ * `overlay` is set, only the segments that carry an overlay (data, error
+ * correction) are faded so their glyphs stay readable; function patterns keep
+ * their full-strength colour.
+ */
+export function moduleColor(role: ModuleRole, dark: boolean, overlay?: boolean): string {
   const c = category(ROLE_CATEGORY[role]);
-  return dark ? c.dark : c.light;
+  const color = dark ? c.dark : c.light;
+  return overlay && hasOverlay(role) ? color + "50" : color;
 }
 
 /** Fine-grained label + description shown when inspecting a single module. */
