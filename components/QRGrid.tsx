@@ -282,52 +282,64 @@ export default function QRGrid({
       (g): g is { id: OverlayCat; union: string; dividers: string } => g !== null,
     );
 
-    // A label per chunk of a unit; chunks of the same unit are linked.
-    const labels: { cx: number; cy: number; text: string; cat: OverlayCat }[] = [];
-    const links: { pts: [number, number][]; cat: OverlayCat }[] = [];
-    const addUnit = (cs: [number, number][], text: string, cat: OverlayCat) => {
-      if (cs.length === 0) return;
-      const centers = connectedComponents(cs).map((comp) => coreCentroid(comp));
-      for (const [cx, cy] of centers) labels.push({ cx, cy, text, cat });
-      if (centers.length > 1) links.push({ pts: centers, cat });
+    // One label per unit, placed in the best box that holds the glyph:
+    // a 2×2 block, else a 2-wide pair, else a 2-tall pair, else a single cell
+    // (the text is shrunk to fit `w`×`h`). No duplicate labels, no links.
+    const labels: {
+      cx: number;
+      cy: number;
+      text: string;
+      cat: OverlayCat;
+      w: number;
+      h: number;
+    }[] = [];
+    const minPos = (comp: [number, number][]) =>
+      Math.min(...comp.map(([r, c]) => readPos.get(ck(r, c)) ?? Infinity));
+    const place = (cs: [number, number][]) => {
+      // Prefer a chunk with a 2×2 core (earliest in data flow), centred on it.
+      const cored = connectedComponents(cs).filter(hasCore);
+      if (cored.length > 0) {
+        const best = cored.reduce((a, b) => (minPos(b) < minPos(a) ? b : a));
+        const [cx, cy] = coreCentroid(best);
+        return { cx, cy, w: 2, h: 2 };
+      }
+      const set = new Set(cs.map(([r, c]) => ck(r, c)));
+      const sorted = [...cs].sort(
+        (a, b) => (readPos.get(ck(a[0], a[1])) ?? Infinity) - (readPos.get(ck(b[0], b[1])) ?? Infinity),
+      );
+      for (const [r, c] of sorted) {
+        if (set.has(ck(r, c + 1))) return { cx: c + 1, cy: r + 0.5, w: 2, h: 1 };
+        if (set.has(ck(r, c - 1))) return { cx: c, cy: r + 0.5, w: 2, h: 1 };
+      }
+      for (const [r, c] of sorted) {
+        if (set.has(ck(r + 1, c))) return { cx: c + 0.5, cy: r + 1, w: 1, h: 2 };
+        if (set.has(ck(r - 1, c))) return { cx: c + 0.5, cy: r, w: 1, h: 2 };
+      }
+      const [r, c] = sorted[0];
+      return { cx: c + 0.5, cy: r + 0.5, w: 1, h: 1 };
     };
-    // A single label placed in the chunk the unit enters first (data-flow
-    // order), with no link — used for the readable character labels. Chunks
-    // that contain a 2×2 block (so the glyph fits) are preferred over thin
-    // slivers; among those the earliest in data flow wins.
-    const addSingle = (cs: [number, number][], text: string, cat: OverlayCat) => {
+    const add = (cs: [number, number][], text: string, cat: OverlayCat) => {
       if (cs.length === 0) return;
-      const comps = connectedComponents(cs);
-      const minPos = (comp: [number, number][]) =>
-        Math.min(...comp.map(([r, c]) => readPos.get(ck(r, c)) ?? Infinity));
-      const fits = comps.filter(hasCore);
-      const pool = fits.length > 0 ? fits : comps;
-      const best = pool.reduce((a, b) => (minPos(b) < minPos(a) ? b : a));
-      const [cx, cy] = coreCentroid(best);
-      labels.push({ cx, cy, text, cat });
+      labels.push({ ...place(cs), text, cat });
     };
 
     if (interleaved) {
       [...dataCw.entries()]
         .sort((a, b) => a[0] - b[0])
-        .forEach(([, cs], i) => addUnit(cs, `D${i + 1}`, "data"));
+        .forEach(([, cs], i) => add(cs, `D${i + 1}`, "data"));
     } else {
       for (const ch of characters) {
-        addSingle(ch.cells, ch.char === " " ? "␣" : ch.char, "data");
+        add(ch.cells, ch.char === " " ? "␣" : ch.char, "data");
       }
-      addSingle(modeCells, "Mode", "data");
-      addSingle(countCells, `${byteCount}`, "data");
-      addSingle(termCells, "End", "data");
+      add(modeCells, "Mode", "data");
+      add(countCells, `${byteCount}`, "data");
+      add(termCells, "End", "data");
     }
-    // EC codewords: linked chunks when interleaved (to show the spread), a
-    // single first-box label when the symbol reads in order.
     [...ecCw.entries()]
       .sort((a, b) => a[0] - b[0])
-      .forEach(([, cs], i) =>
-        (interleaved ? addUnit : addSingle)(cs, `E${i + 1}`, "ec"),
-      );
+      .forEach(([, cs], i) => add(cs, `E${i + 1}`, "ec"));
 
-    return { groups, labels, links };
+    return { groups, labels };
   }, [modules, characters, byteCount, blocks]);
 
   // Reading order: one arrow glyph per codeword at its centroid, pointing in
@@ -532,26 +544,14 @@ export default function QRGrid({
               ))}
 
             {showChars &&
-              overlays.links.map((lk, i) => (
-                <polyline
-                  key={`link${i}`}
-                  points={lk.pts.map(([x, y]) => `${x},${y}`).join(" ")}
-                  fill="none"
-                  stroke={overlayColor(lk.cat)}
-                  strokeWidth={0.12}
-                  strokeDasharray="0.35 0.25"
-                  strokeLinecap="round"
-                  opacity={0.55}
-                />
-              ))}
-
-            {showChars &&
               overlays.labels.map((b, i) => (
                 <text
                   key={i}
                   x={b.cx}
                   y={b.cy}
-                  fontSize={Math.min(1.5, 2.4 / b.text.length)}
+                  // Fit the glyph to its box: limited by height and by width
+                  // per character (≈0.62em advance in the mono font).
+                  fontSize={Math.min(b.h * 0.5, b.w / (b.text.length * 0.75))}
                   fontFamily="var(--font-mono, monospace)"
                   fontWeight={700}
                   textAnchor="middle"

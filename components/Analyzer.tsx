@@ -77,7 +77,7 @@ export default function Analyzer() {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-10 sm:px-6 lg:px-8">
       <header className="flex flex-col gap-2">
         <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-          QR Code Analyzer
+          QR Code Analyser
         </h1>
         <p className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
           Type any text and watch it get encoded into a real, scannable QR

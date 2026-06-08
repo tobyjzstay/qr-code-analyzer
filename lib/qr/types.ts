@@ -1,4 +1,4 @@
-// Types for the QR code analyzer.
+// Types for the QR code analyser.
 
 /** Error correction level. L = 7%, M = 15%, Q = 25%, H = 30% recovery. */
 export type ECLevel = "L" | "M" | "Q" | "H";
@@ -8,7 +8,7 @@ export type Overlay = "chars" | "direction" | "bits" | "none";
 /**
  * The semantic role of a single module (cell) in the QR matrix. Every module
  * in the symbol falls into exactly one of these categories. The data region is
- * broken down further than a normal encoder would bother with, so the analyzer
+ * broken down further than a normal encoder would bother with, so the analyser
  * can colour each part of the message independently.
  */
 export type ModuleRole =

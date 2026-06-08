@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "QR Code Analyzer",
+  title: "QR Code Analyser",
   description:
     "Encode text into a QR code and explore how every module is used — message data, error correction, finder patterns and more.",
 };

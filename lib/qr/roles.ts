@@ -1,6 +1,6 @@
 import type { ModuleRole } from "./types";
 
-// The analyzer groups the fine-grained module roles into the six visible
+// The analyser groups the fine-grained module roles into the six visible
 // categories from Dan Hollick's QR explainer, using his exact colours: finder
 // patterns are red, the alignment pattern pink, the timing pattern blue, the
 // format information yellow, the message data green, and the error-correction
