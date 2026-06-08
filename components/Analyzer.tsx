@@ -2,7 +2,7 @@
 
 import { analyze } from "@/lib/qr/analyze";
 import { CategoryId, moduleColor, ROLE_INFO } from "@/lib/qr/roles";
-import type { ECLevel, QRAnalysis, QRModule } from "@/lib/qr/types";
+import type { ECLevel, Overlay, QRAnalysis, QRModule } from "@/lib/qr/types";
 import { useMemo, useState } from "react";
 import Legend from "./Legend";
 import QRGrid from "./QRGrid";
@@ -12,6 +12,12 @@ const EC_LEVELS: { value: ECLevel; label: string }[] = [
   { value: "M", label: "M · 15%" },
   { value: "Q", label: "Q · 25%" },
   { value: "H", label: "H · 30%" },
+];
+
+const OVERLAYS: { value: Overlay; label: string }[] = [
+  { value: "chars", label: "Characters" },
+  { value: "direction", label: "Reading order" },
+  { value: "none", label: "None" },
 ];
 
 const DEFAULT_TEXT = "https://www.anthropic.com/claude-code";
@@ -29,7 +35,7 @@ export default function Analyzer() {
   // mask, controlled by the Mask dropdown.
   const [mask, setMask] = useState<number | undefined>(undefined);
   // Which overlay to show on top of the symbol (mutually exclusive).
-  const [overlay, setOverlay] = useState<"chars" | "direction" | "none">("chars");
+  const [overlay, setOverlay] = useState<Overlay>("none");
   const [highlight, setHighlight] = useState<CategoryId | null>(null);
   const [hovered, setHovered] = useState<QRModule | null>(null);
 
@@ -131,32 +137,24 @@ export default function Analyzer() {
           </select>
         </label>
 
-        <fieldset className="flex flex-col gap-1.5 py-1">
-          <legend className="mb-0.5 text-xs font-medium uppercase tracking-wide text-zinc-500">
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">
             Overlay
-          </legend>
-          {(
-            [
-              { value: "chars", label: "Characters" },
-              { value: "direction", label: "Reading order" },
-              { value: "none", label: "None" },
-            ] as const
-          ).map((o) => (
-            <label
-              key={o.value}
-              className="flex cursor-pointer select-none items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300"
-            >
-              <input
-                type="radio"
-                name="overlay"
-                checked={overlay === o.value}
-                onChange={() => setOverlay(o.value)}
-                className="size-4 border-zinc-300 accent-emerald-600"
-              />
-              {o.label}
-            </label>
-          ))}
-        </fieldset>
+          </span>
+          <select
+            value={overlay ?? "none"}
+            onChange={(e) =>
+              setOverlay(e.target.value as Overlay)
+            }
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-zinc-700"
+          >
+            {OVERLAYS.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {error && (
