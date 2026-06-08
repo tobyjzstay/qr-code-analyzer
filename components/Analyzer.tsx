@@ -21,7 +21,7 @@ const OVERLAYS: { value: Overlay; label: string }[] = [
   { value: "none", label: "None" },
 ];
 
-const DEFAULT_TEXT = "https://www.anthropic.com/claude-code";
+const DEFAULT_TEXT = "https://swengineer.dev";
 
 export default function Analyzer() {
   // `bytes` is the source of truth for the encoded data; `text` mirrors it for
