@@ -79,12 +79,10 @@ export default function Analyzer() {
         <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
           QR Code Analyzer
         </h1>
-        <p className="max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+        <p className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
           Type any text and watch it get encoded into a real, scannable QR
-          symbol. Every module is coloured by its job — the message data, the
-          error-correction codewords, the finder, timing and alignment patterns,
-          and the format information. Hover the grid or the legend to explore,
-          and click a green message module to flip its bit and watch the
+          symbol. Hover the grid or the legend to explore,
+          and click a message data module to flip its bit and watch the
           error-correction codewords recompute.
         </p>
       </header>
@@ -209,7 +207,6 @@ export default function Analyzer() {
           <aside className="flex flex-col gap-6">
             <Stats analysis={analysis} />
             <Legend analysis={analysis} highlight={highlight} onHighlight={setHighlight} />
-            <FormatInfo analysis={analysis} />
           </aside>
         </div>
       )}
@@ -264,6 +261,7 @@ function HoverReadout({
 }
 
 function Stats({ analysis }: { analysis: QRAnalysis }) {
+  const { ecLevelBits, maskBits, ecBits } = analysis.formatGroups;
   const rows: [string, string][] = [
     ["Version", `${analysis.version}`],
     ["Size", `${analysis.size} × ${analysis.size}`],
@@ -287,6 +285,29 @@ function Stats({ analysis }: { analysis: QRAnalysis }) {
           </dd>
         </div>
       ))}
+      <div className="col-span-2 mt-4 border-t pt-4">
+        <dt className="text-xs uppercase tracking-wide text-zinc-400">Format information</dt>
+        <div className="flex flex-col gap-2.5">
+          <dd className="flex flex-col gap-1">
+            <Bits bits={ecLevelBits} />
+            <span className="text-xs text-zinc-500">
+              Error-correction level ({analysis.errorCorrectionLevel})
+            </span>
+          </dd>
+          <dd className="flex flex-col gap-1">
+            <Bits bits={maskBits} />
+            <span className="text-xs text-zinc-500">
+              Mask pattern ({analysis.maskPattern})
+            </span>
+          </dd>
+          <dd className="flex flex-col gap-1">
+            <Bits bits={ecBits} />
+            <span className="text-xs text-zinc-500">
+              Error-correction format (BCH)
+            </span>
+          </dd>
+        </div>
+      </div>
     </dl>
   );
 }
