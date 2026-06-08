@@ -27,6 +27,7 @@ export default function Analyzer() {
   // the input box. Flipping a bit edits `bytes` directly (the result may not be
   // valid text), so the two can diverge.
   const [text, setText] = useState(DEFAULT_TEXT);
+  const [version, setVersion] = useState(1);
   const [bytes, setBytes] = useState<Uint8Array>(() =>
     new TextEncoder().encode(DEFAULT_TEXT),
   );
@@ -45,13 +46,13 @@ export default function Analyzer() {
     }
     try {
       return {
-        analysis: analyze(bytes, { errorCorrectionLevel: ecLevel, mask }),
+        analysis: analyze(bytes, { errorCorrectionLevel: ecLevel, mask, version }),
         error: null,
       };
     } catch (e) {
       return { analysis: null, error: (e as Error).message };
     }
-  }, [bytes, ecLevel, mask]);
+  }, [bytes, ecLevel, mask, version]);
 
   const handleText = (value: string) => {
     setText(value);
@@ -96,6 +97,22 @@ export default function Analyzer() {
             value={text}
             onChange={(e) => handleText(e.target.value)}
             placeholder="Enter a URL or any text…"
+            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition-colors focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-zinc-700"
+          />
+        </label>
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+            Version
+          </span>
+          <input
+            type="number"
+            min="1"
+            max="40"
+            step="1"
+            value={version}
+            onChange={(e) => setVersion(Number(e.target.value))}
+            placeholder="1"
             className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition-colors focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-zinc-700"
           />
         </label>
