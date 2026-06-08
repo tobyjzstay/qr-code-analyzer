@@ -16,7 +16,7 @@ const EC_LEVELS: { value: ECLevel; label: string }[] = [
 
 const OVERLAYS: { value: Overlay; label: string }[] = [
   { value: "chars", label: "Characters" },
-  { value: "direction", label: "Reading order" },
+  // { value: "direction", label: "Reading order" },
   { value: "bits", label: "Bit numbers" },
   { value: "none", label: "None" },
 ];
